@@ -51,8 +51,8 @@ Create a `.env` file in the `backend` directory:
 ```env
 DATABASE_URL=postgresql://user:password@localhost/strc_tracker
 SECRET_KEY=your-secret-key-here
-PLAID_CLIENT_ID=6952cecf168aa50020a8c16a
-PLAID_SECRET=108b8a7a5be3ab3913904e606b83c9
+PLAID_CLIENT_ID=xxx
+PLAID_SECRET=xxx
 PLAID_ENV=sandbox
 DEBUG=True
 ```
