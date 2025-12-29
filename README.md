@@ -1,12 +1,10 @@
 # STRC Tracker
 
-As a Gen Z professional, preserving my money safe feels like a full-time job. Many investments are high-risk and traditional savings accounts can’t keep up — inflation erodes your returns. Bitcoin-backed products are different: with a fixed supply and yield-generating structures, you can realistically earn up to 15% per year. 
+Bitcoin-backed products are different: with a fixed supply and yield-generating structures, you can realistically earn up to 15% per year — slowly outpacing traditional 3% High-Yield Savings Accounts over the next decade.
 
-Unfortunately, they're very confusing to use with current tools like Robinhood or Fidelity. It's unclear when dividends are paid, and almost impossible to determine total Return on Investment, which depends on jurisdiction and tax bracket.
+This app lowers the barrier to entry, giving all investors access to these powerful financial vehicles without jurisdiction specific headaches or complicated financial vehicles.
 
-**This app simplifies all that, lowering the barrier of entry to these products, granting all investors access to life-changing financial vehicles.**
-
-We will help you track high-yield preferreds — STRC, SATA, MSTR preferreds, and similar assets — with a focus on simplicity. Users can seamlessly connect their brokerage accounts and get a straightforward, mobile-friendly view of their positions and payouts. We will track your purchases, breakdown your divident payouts, notify you of when you need to invest to receive these dividends, and model your long-term performance.
+Track high-yield preferreds — STRC, SATA, MSTR preferreds, and similar assets — with simplicity. Connect your brokerage accounts seamlessly, view your positions and payouts in a mobile-friendly dashboard, track purchases, monitor dividends, and model long-term performance. Outperform the rest. HODL.
 
 ## Project Structure
 
