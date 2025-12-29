@@ -1,6 +1,12 @@
 # STRC Tracker
 
-A comprehensive stock position and dividend tracking application with Plaid integration.
+As a Gen Z professional, preserving my money safe feels like a full-time job. Many investments are high-risk and traditional savings accounts can’t keep up — inflation erodes your returns. Bitcoin-backed products are different: with a fixed supply and yield-generating structures, you can realistically earn up to 15% per year. 
+
+Unfortunately, they're very confusing to use with current tools like Robinhood or Fidelity. It's unclear when dividends are paid, and almost impossible to determine total Return on Investment, which depends on jurisdiction and tax bracket.
+
+**This app simplifies all that, lowering the barrier of entry to these products, granting all investors access to life-changing financial vehicles.**
+
+We will help you track high-yield preferreds — STRC, SATA, MSTR preferreds, and similar assets — with a focus on simplicity. Users can seamlessly connect their brokerage accounts and get a straightforward, mobile-friendly view of their positions and payouts. We will track your purchases, breakdown your divident payouts, notify you of when you need to invest to receive these dividends, and model your long-term performance.
 
 ## Project Structure
 
