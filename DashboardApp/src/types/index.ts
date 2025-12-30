@@ -63,9 +63,16 @@ export interface Position {
   asset_type?: string;
 }
 
+export enum ActivityType {
+  BUY = 'BUY',
+  SELL = 'SELL',
+  DIVIDEND = 'DIVIDEND',
+  UPCOMING_DIVIDEND = 'UPCOMING_DIVIDEND',
+}
+
 export interface ActivityItem {
   timestamp: string;
-  activity_type: 'BUY' | 'SELL' | 'DIVIDEND' | 'UPCOMING_DIVIDEND';
+  activity_type: ActivityType | string; // Allow string for backend compatibility
   position_id?: number;
   asset_type?: string;
   quantity: number;

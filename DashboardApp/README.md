@@ -4,27 +4,32 @@ React Native + Expo mobile frontend for the STRC Tracker dashboard.
 
 ## Quick Start
 
-### 1. Install Dependencies
-```bash
-npm install
-```
-
-### 2. Start Expo
+### 1. Start Expo
 ```bash
 npm start
 ```
 
-### 3. Run the App
+### 2. Open iOS Simulator
 
-**iOS Simulator:**
-- Press `i` in the Expo terminal, or
-- `npm run ios`
+**Press `i` in the Expo terminal**
 
-**Android Emulator:**
-- Press `a` in the Expo terminal, or
-- `npm run android`
+This will:
+- Launch iOS Simulator
+- Build and install the app
+- Automatically open the app
 
-**Physical Device:**
+**First time?** Make sure Xcode is installed and command line tools are configured:
+```bash
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+```
+
+### 3. Alternative: Run Directly
+```bash
+npm run ios    # iOS Simulator
+npm run android  # Android Emulator
+```
+
+### 4. Physical Device
 1. Install [Expo Go](https://expo.dev/client) on your phone
 2. Scan the QR code from the terminal
 3. Make sure phone and computer are on the same WiFi

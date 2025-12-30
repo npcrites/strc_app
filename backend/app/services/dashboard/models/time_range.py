@@ -25,7 +25,7 @@ class TimeRange:
         """Validate time range"""
         if self.start_date and self.start_date > self.end_date:
             raise ValueError("start_date must be <= end_date")
-        if self.end_date > datetime.now():
+        if self.end_date > datetime.utcnow():
             raise ValueError("Cannot project future dashboards")
     
     @staticmethod
@@ -42,7 +42,8 @@ class TimeRange:
         Raises:
             ValueError: If shorthand is not recognized
         """
-        now = datetime.now()
+        # Use UTC to match database timestamps
+        now = datetime.utcnow()
         
         mapping = {
             "1M": (now - timedelta(days=30), now, TimeGranularity.DAILY),

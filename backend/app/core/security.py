@@ -52,8 +52,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except JWTError:
         raise credentials_exception
     
-    # TODO: Fetch user from database
-    # For now, return user_id
+    # Return user_id from token
     return {"user_id": user_id}
 
 

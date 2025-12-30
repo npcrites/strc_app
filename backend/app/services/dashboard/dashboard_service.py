@@ -92,7 +92,7 @@ class DashboardService:
         
         # Get upcoming dividends (as of current time)
         upcoming_dividends = activity_queries.get_upcoming_dividends(
-            db, user_id, as_of=datetime.now()
+            db, user_id, as_of=datetime.utcnow()
         )
         activity_items.extend(upcoming_dividends)
         
@@ -130,7 +130,7 @@ class DashboardService:
         
         # Assemble response DTO
         return DashboardSnapshot(
-            as_of=datetime.now(),
+            as_of=datetime.utcnow(),
             total=TotalMetrics(
                 current=round(end_val, 2),
                 start=round(start_val, 2),

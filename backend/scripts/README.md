@@ -1,67 +1,119 @@
-# Backend Scripts
+# Mock Data Scripts
 
-Utility scripts for testing and development.
+This directory contains scripts for generating standardized mock data for development and testing.
 
-## Available Scripts
+## Quick Start
 
-### `fetch_investment_data.py`
+### Seed Demo User Data
 
-Fetches and displays sample investment data from Plaid Sandbox.
+To seed the database with a complete demo portfolio:
 
-**Usage:**
 ```bash
 cd backend
-python scripts/fetch_investment_data.py
+python scripts/seed_sample_data.py
 ```
 
-**What it does:**
-1. Creates a sandbox Plaid item with investment accounts
-2. Fetches and displays:
-   - Investment accounts (IRA, 401k, etc.)
-   - Securities (stocks, ETFs, mutual funds, etc.)
-   - Current holdings with quantities and values
-   - Investment transactions (buys, sells, dividends, etc.)
+This will create:
+- Demo user: `demo@example.com` / `demo123`
+- 2 brokerages (Fidelity, Schwab)
+- 3 accounts (IRA, Brokerage, 401k)
+- 6 positions (STRC, SATA, MSTR-A, AAPL, MSFT)
+- Multiple dividends (paid and upcoming)
+- Ex-dates for upcoming dividends
 
-**Output includes:**
-- Account list with types
-- Securities with ticker symbols and prices
-- Holdings with cost basis and current values
-- Transaction history with types and amounts
-- Portfolio summary
+### Overwrite Existing Data
 
-**Example output:**
-```
-📊 Accounts (12):
-  • Plaid IRA (investment)
-  • Plaid 401k (investment)
-  ...
+To delete and recreate the demo user (WARNING: This deletes all user data):
 
-💼 Securities (13):
-  • AAPL   | Apple Inc.                    | equity    | $150.00
-  ...
-
-📈 Holdings (13):
-  • AAPL   | Apple Inc. | Qty: 10.0000 | Cost: $1,500.00 | Value: $1,500.00
-  ...
-
-💰 Total Portfolio Value: $25,446.39
-```
-
-## Running Tests
-
-### Connection Test
 ```bash
-python -m tests.test_plaid_connection
+python scripts/seed_sample_data.py --overwrite
 ```
 
-### Plaid Service Tests
-```bash
-pytest tests/test_plaid_service.py -v
+## MockDataFactory
+
+The `MockDataFactory` class provides a standardized way to create mock data programmatically.
+
+### Usage in Code
+
+```python
+from scripts.mock_data_factory import MockDataFactory
+from app.db.session import SessionLocal
+
+db = SessionLocal()
+
+# Create complete portfolio
+result = MockDataFactory.create_complete_portfolio(
+    db,
+    user_email="demo@example.com",
+    user_password="demo123"
+)
+
+# Or create individual components
+user = MockDataFactory.create_demo_user(db, "test@example.com", "password123")
+brokerages = MockDataFactory.create_brokerages(db, user.id)
+accounts = MockDataFactory.create_accounts(db, user.id, brokerages)
+positions = MockDataFactory.create_positions(db, user.id, accounts)
+dividends = MockDataFactory.create_dividends(db, user.id, positions)
+ex_dates = MockDataFactory.create_ex_dates(db, user.id)
 ```
 
-## Notes
+### Features
 
-- All scripts use the `.env` file for Plaid credentials
-- Sandbox environment is used by default
-- Scripts are for development/testing purposes only
+- **Idempotent**: Running the same script multiple times won't create duplicates
+- **Configurable**: All methods accept custom configuration
+- **Reusable**: Can be used in tests, seed scripts, and development tools
+- **Safe**: Checks for existing data before creating new records
 
+### Customizing Mock Data
+
+You can customize the mock data by passing configuration dictionaries:
+
+```python
+# Custom positions
+positions_config = [
+    {
+        "account_id": account.id,
+        "ticker": "CUSTOM",
+        "name": "Custom Stock",
+        "shares": Decimal("100.000000"),
+        "cost_basis": Decimal("10000.00"),
+        "market_value": Decimal("11000.00"),
+        "asset_type": "common_stock"
+    }
+]
+
+positions = MockDataFactory.create_positions(
+    db, user.id, accounts, positions_config=positions_config
+)
+```
+
+## Architecture
+
+```
+scripts/
+├── mock_data_factory.py    # Reusable factory class
+├── seed_sample_data.py     # CLI script for seeding
+└── README.md               # This file
+```
+
+## Safety Checks
+
+The seed script includes safety checks:
+- ✅ Verifies database is not production
+- ✅ Confirms localhost connection
+- ✅ Checks for existing data before creating
+- ✅ Provides clear error messages
+
+## Demo User Credentials
+
+After seeding, you can log in with:
+- **Email**: `demo@example.com`
+- **Password**: `demo123`
+
+## Future Enhancements
+
+The factory can be extended to support:
+- Multiple users with different portfolio configurations
+- Historical data generation
+- Realistic market data simulation
+- Custom asset types and tickers

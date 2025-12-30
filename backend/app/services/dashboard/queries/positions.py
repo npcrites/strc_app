@@ -53,7 +53,7 @@ def get_position_snapshots(
     snapshots = []
     
     # Get baseline snapshot (at or before start_date)
-    if start_date:
+    if start_date and start_date != end_date:
         # Get the earliest timestamp in range
         earliest_timestamp_subquery = db.query(
             func.min(Position.snapshot_timestamp)
@@ -77,16 +77,20 @@ def get_position_snapshots(
                 snapshots.append(_position_to_snapshot(pos))
     
     # Get end-of-range snapshot (most recent before end_date)
+    # When start_date == end_date, just get the most recent positions
     end_positions = base_query.order_by(desc(Position.snapshot_timestamp)).all()
     
     if end_positions:
-        # Group by timestamp and get the most recent
+        # Group by date (not exact timestamp) to get all positions from the most recent day
+        # This handles cases where positions have slightly different timestamps
+        latest_date = end_positions[0].snapshot_timestamp.date()
         latest_timestamp = end_positions[0].snapshot_timestamp
         
-        # Only add if different from baseline
-        if not snapshots or snapshots[0].timestamp != latest_timestamp:
+        # Only add if different from baseline (or if no baseline was set)
+        if not snapshots or snapshots[0].timestamp.date() != latest_date:
             for pos in end_positions:
-                if pos.snapshot_timestamp == latest_timestamp:
+                # Include all positions from the most recent date
+                if pos.snapshot_timestamp.date() == latest_date:
                     snapshots.append(_position_to_snapshot(pos))
     
     return snapshots
