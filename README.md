@@ -1,10 +1,6 @@
 # STRC Tracker
 
-Bitcoin-backed products are different: with a fixed supply and yield-generating structures, you can realistically earn up to 15% per year — slowly outpacing traditional 3% High-Yield Savings Accounts over the next decade.
-
-This app lowers the barrier to entry, giving all investors access to these powerful financial vehicles without jurisdiction specific headaches or complicated financial vehicles.
-
-Track high-yield preferreds — STRC, SATA, MSTR preferreds, and similar assets — with simplicity. Connect your brokerage accounts seamlessly, view your positions and payouts in a mobile-friendly dashboard, track purchases, monitor dividends, and model long-term performance. Outperform the rest. HODL.
+A comprehensive stock position and dividend tracking application with Plaid integration.
 
 ## Project Structure
 
@@ -55,8 +51,8 @@ Create a `.env` file in the `backend` directory:
 ```env
 DATABASE_URL=postgresql://user:password@localhost/strc_tracker
 SECRET_KEY=your-secret-key-here
-PLAID_CLIENT_ID=xxx
-PLAID_SECRET=xxx
+PLAID_CLIENT_ID=6952cecf168aa50020a8c16a
+PLAID_SECRET=108b8a7a5be3ab3913904e606b83c9
 PLAID_ENV=sandbox
 DEBUG=True
 ```

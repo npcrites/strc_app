@@ -30,9 +30,10 @@ class Settings(BaseSettings):
     # App
     DEBUG: bool = True
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": True
+    }
 
 
 settings = Settings()

@@ -1,8 +1,16 @@
 """
 Tests for DividendEngine
 """
+import os
+import sys
+from pathlib import Path
 import pytest
 from decimal import Decimal
+
+# Add parent directory to path
+backend_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_dir))
+
 from app.services.dividend_engine import DividendEngine
 
 
@@ -60,3 +68,5 @@ class TestDividendEngine:
         # In production, this would return actual ex-dates
 
 
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

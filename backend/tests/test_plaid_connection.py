@@ -41,16 +41,14 @@ def test_plaid_connection():
         print(f"   Expiration: {link_token_result['expiration']}")
         
         print("\n✅ All connection tests passed!")
-        return True
         
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
         import traceback
         traceback.print_exc()
-        return False
+        raise
 
 
 if __name__ == "__main__":
-    success = test_plaid_connection()
-    sys.exit(0 if success else 1)
+    test_plaid_connection()
 
