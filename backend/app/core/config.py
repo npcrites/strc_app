@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     PLAID_ENV: str = "sandbox"  # sandbox, development, production
     
     # CORS (comma-separated string, will be split)
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:19006"
+    # Includes Expo default ports: 19000 (Metro), 19006 (Expo Go), 8081 (Metro alternative)
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:19006,http://localhost:19000,http://localhost:8081,exp://localhost:8081"
     
     @property
     def cors_origins_list(self) -> List[str]:
