@@ -129,7 +129,7 @@ export default function HomeScreen() {
       // This allows the native refresh control to complete its dismissal animation
       setTimeout(() => {
         setRefreshing(false);
-      }, 100);
+      }, 300);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to refresh dashboard';
       console.error('Dashboard refresh error:', err);
@@ -137,7 +137,7 @@ export default function HomeScreen() {
       // Also delay error case to allow smooth transition
       setTimeout(() => {
         setRefreshing(false);
-      }, 300);
+      }, 100);
     }
   }, [token, timeRange]);
 
