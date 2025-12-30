@@ -7,7 +7,7 @@ A comprehensive stock position and dividend tracking application with Plaid inte
 ```
 strc_tracker/
 ├── backend/          # FastAPI backend
-├── mobile/           # React Native mobile app
+├── DashboardApp/    # React Native + Expo mobile app (TypeScript)
 └── scripts/          # Utility scripts
 ```
 
@@ -95,9 +95,9 @@ API documentation: `http://localhost:8000/docs`
 
 ### Installation
 
-1. Navigate to the mobile directory:
+1. Navigate to the DashboardApp directory:
 ```bash
-cd mobile
+cd DashboardApp
 ```
 
 2. Install dependencies:
@@ -119,6 +119,8 @@ npm run ios
 ```bash
 npm run android
 ```
+
+**Note:** The mobile app has been migrated to `DashboardApp/` with TypeScript support, authentication, and dashboard service integration. See `DashboardApp/README.md` for details.
 
 ## Docker
 
@@ -177,9 +179,11 @@ pytest
 ### Mobile
 
 - React Native with Expo
-- React Navigation for routing
-- Context API for state management
-- AsyncStorage for local storage
+- TypeScript for type safety
+- React Navigation (Bottom Tabs) for routing
+- Context API for authentication and state management
+- AsyncStorage for token storage
+- Victory Native for data visualization
 
 ## License
 

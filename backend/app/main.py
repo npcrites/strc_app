@@ -3,7 +3,7 @@ FastAPI entrypoint for strc_tracker backend
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import positions, dividends, users
+from app.api.routes import positions, dividends, users, dashboard
 from app.core.config import settings
 
 app = FastAPI(
@@ -25,6 +25,7 @@ app.add_middleware(
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(positions.router, prefix="/api", tags=["positions"])
 app.include_router(dividends.router, prefix="/api", tags=["dividends"])
+app.include_router(dashboard.router)
 
 
 @app.get("/")
