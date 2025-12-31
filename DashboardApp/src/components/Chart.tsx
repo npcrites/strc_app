@@ -32,10 +32,10 @@ const createPattern = (type: string) => {
         <Pattern
           id="areaPattern"
           patternUnits="userSpaceOnUse"
-          width="6"
-          height="6"
+          width="8"
+          height="8"
         >
-          <Circle cx="3" cy="3" r="1" fill={Colors.chartOrange} fillOpacity="0.1" />
+          <Circle cx="4" cy="4" r="1.5" fill={Colors.chartOrange} fillOpacity="0.2" />
         </Pattern>
       );
     case 'crosshatch':
@@ -84,7 +84,66 @@ const GradientContainer = ({ patternType = 'diagonal', ...props }: any) => {
       <Defs>
         <LinearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
           <Stop offset="0%" stopColor={Colors.chartOrange} stopOpacity="0.3" />
-          <Stop offset="100%" stopColor={Colors.chartOrangeGradient} stopOpacity="0" />
+          <Stop offset="1%" stopColor={Colors.chartOrange} stopOpacity="0.29" />
+          <Stop offset="2%" stopColor={Colors.chartOrange} stopOpacity="0.28" />
+          <Stop offset="3%" stopColor={Colors.chartOrange} stopOpacity="0.27" />
+          <Stop offset="4%" stopColor={Colors.chartOrange} stopOpacity="0.26" />
+          <Stop offset="5%" stopColor={Colors.chartOrange} stopOpacity="0.25" />
+          <Stop offset="7%" stopColor={Colors.chartOrange} stopOpacity="0.24" />
+          <Stop offset="10%" stopColor={Colors.chartOrange} stopOpacity="0.22" />
+          <Stop offset="15%" stopColor={Colors.chartOrange} stopOpacity="0.20" />
+          <Stop offset="20%" stopColor={Colors.chartOrange} stopOpacity="0.18" />
+          <Stop offset="25%" stopColor={Colors.chartOrange} stopOpacity="0.16" />
+          <Stop offset="30%" stopColor={Colors.chartOrange} stopOpacity="0.14" />
+          <Stop offset="35%" stopColor={Colors.chartOrange} stopOpacity="0.12" />
+          <Stop offset="40%" stopColor={Colors.chartOrange} stopOpacity="0.1" />
+          <Stop offset="45%" stopColor={Colors.chartOrange} stopOpacity="0.08" />
+          <Stop offset="50%" stopColor={Colors.chartOrange} stopOpacity="0.06" />
+          <Stop offset="60%" stopColor={Colors.chartOrangeGradient} stopOpacity="0.04" />
+          <Stop offset="70%" stopColor={Colors.chartOrangeGradient} stopOpacity="0.03" />
+          <Stop offset="80%" stopColor={Colors.chartOrangeGradient} stopOpacity="0.02" />
+          <Stop offset="85%" stopColor={Colors.chartOrangeGradient} stopOpacity="0.015" />
+          <Stop offset="90%" stopColor={Colors.background} stopOpacity="0.12" />
+          <Stop offset="92%" stopColor={Colors.background} stopOpacity="0.08" />
+          <Stop offset="94%" stopColor={Colors.background} stopOpacity="0.06" />
+          <Stop offset="96%" stopColor={Colors.background} stopOpacity="0.04" />
+          <Stop offset="97%" stopColor={Colors.background} stopOpacity="0.03" />
+          <Stop offset="98%" stopColor={Colors.background} stopOpacity="0.02" />
+          <Stop offset="99%" stopColor={Colors.background} stopOpacity="0.01" />
+          <Stop offset="100%" stopColor={Colors.background} stopOpacity="0" />
+        </LinearGradient>
+        {/* Gradient to fade pattern dots to background color - starts at 25%, extended final fade */}
+        <LinearGradient id="patternFadeGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+          <Stop offset="0%" stopColor={Colors.background} stopOpacity="0" />
+          <Stop offset="10%" stopColor={Colors.background} stopOpacity="0" />
+          <Stop offset="20%" stopColor={Colors.background} stopOpacity="0" />
+          <Stop offset="25%" stopColor={Colors.background} stopOpacity="0.01" />
+          <Stop offset="30%" stopColor={Colors.background} stopOpacity="0.02" />
+          <Stop offset="35%" stopColor={Colors.background} stopOpacity="0.03" />
+          <Stop offset="40%" stopColor={Colors.background} stopOpacity="0.05" />
+          <Stop offset="45%" stopColor={Colors.background} stopOpacity="0.07" />
+          <Stop offset="50%" stopColor={Colors.background} stopOpacity="0.1" />
+          <Stop offset="55%" stopColor={Colors.background} stopOpacity="0.13" />
+          <Stop offset="60%" stopColor={Colors.background} stopOpacity="0.16" />
+          <Stop offset="65%" stopColor={Colors.background} stopOpacity="0.2" />
+          <Stop offset="70%" stopColor={Colors.background} stopOpacity="0.25" />
+          <Stop offset="75%" stopColor={Colors.background} stopOpacity="0.32" />
+          <Stop offset="80%" stopColor={Colors.background} stopOpacity="0.4" />
+          <Stop offset="82%" stopColor={Colors.background} stopOpacity="0.45" />
+          <Stop offset="84%" stopColor={Colors.background} stopOpacity="0.5" />
+          <Stop offset="86%" stopColor={Colors.background} stopOpacity="0.55" />
+          <Stop offset="88%" stopColor={Colors.background} stopOpacity="0.6" />
+          <Stop offset="90%" stopColor={Colors.background} stopOpacity="0.65" />
+          <Stop offset="91%" stopColor={Colors.background} stopOpacity="0.68" />
+          <Stop offset="92%" stopColor={Colors.background} stopOpacity="0.71" />
+          <Stop offset="93%" stopColor={Colors.background} stopOpacity="0.74" />
+          <Stop offset="94%" stopColor={Colors.background} stopOpacity="0.77" />
+          <Stop offset="95%" stopColor={Colors.background} stopOpacity="0.8" />
+          <Stop offset="96%" stopColor={Colors.background} stopOpacity="0.83" />
+          <Stop offset="97%" stopColor={Colors.background} stopOpacity="0.86" />
+          <Stop offset="98%" stopColor={Colors.background} stopOpacity="0.9" />
+          <Stop offset="99%" stopColor={Colors.background} stopOpacity="0.95" />
+          <Stop offset="100%" stopColor={Colors.background} stopOpacity="1" />
         </LinearGradient>
         {patternType !== 'none' && createPattern(patternType)}
       </Defs>
@@ -119,7 +178,7 @@ export default function Chart({ data, height = 200, patternType = 'dots' }: Char
             },
           }}
         />
-        {/* Pattern overlay */}
+        {/* Pattern overlay - dots fill area below line */}
         {patternType !== 'none' && (
           <VictoryArea
             data={data}
@@ -131,13 +190,24 @@ export default function Chart({ data, height = 200, patternType = 'dots' }: Char
             }}
           />
         )}
+        {/* Gradient overlay to fade pattern to background color - subtle fade like image */}
+        {patternType !== 'none' && (
+          <VictoryArea
+            data={data}
+            style={{
+              data: {
+                fill: 'url(#patternFadeGradient)',
+              },
+            }}
+          />
+        )}
         {/* Orange line */}
         <VictoryLine
           data={data}
           style={{
             data: {
               stroke: Colors.chartOrange,
-              strokeWidth: 2,
+              strokeWidth: 3,
             },
           }}
         />

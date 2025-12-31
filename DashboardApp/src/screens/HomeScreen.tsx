@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import { formatCurrency, formatPercentage, formatDateShort } from '../utils/form
 import { Colors } from '../constants/colors';
 import Chart from '../components/Chart';
 import { refreshRateLimiter } from '../utils/rateLimiter';
+import { filterDashboardByTimeRange } from '../utils/dashboardFilter';
 
 type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
 type ContentFilter = 'Total' | 'Assets' | 'Dividends';
@@ -50,6 +51,14 @@ export default function HomeScreen() {
   const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
   const [contentFilter, setContentFilter] = useState<ContentFilter>('Total');
   const [error, setError] = useState<string | null>(null);
+  
+  // Store all data for client-side filtering (Coinbase-style)
+  const allDataRef = useRef<DashboardSnapshot | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isRefreshingRef = useRef<boolean>(false);
+  const lastRefreshTimeRef = useRef<number>(0);
+  const MIN_REFRESH_INTERVAL_MS = 30 * 1000; // Minimum 30 seconds between any refreshes
 
   // Calculate responsive scale factor (base: 375px iPhone standard)
   const scaleFactor = screenWidth / 375;
@@ -66,56 +75,150 @@ export default function HomeScreen() {
     'ALL': 'ALL',
   };
 
+  // Load all data once on mount or when token changes, and set up auto-refresh
   useEffect(() => {
     // Wait for auth to finish loading
     if (authLoading) {
       return;
     }
     
+    // Clear any existing interval
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
+    
     // If no token, show demo data instead of error
     if (!token) {
       setLoading(false);
-      setData(getDemoData());
+      const demoData = getDemoData();
+      allDataRef.current = demoData;
+      setData(demoData);
       return;
     }
     
-    // Load dashboard when token is available
-    loadDashboard();
+    // Load all data once (fetch with 'ALL' time range)
+    loadAllData();
+    
+    // Set up automatic refresh every 60 seconds to update prices & portfolio totals
+    refreshIntervalRef.current = setInterval(() => {
+      console.log('⏰ Auto-refreshing dashboard data (60 second interval)');
+      loadAllData(true); // Pass true to indicate this is an auto-refresh
+    }, 60 * 1000); // 60 seconds
+    
+    // Cleanup interval on unmount or when dependencies change
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+        refreshIntervalRef.current = null;
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, timeRange, authLoading]);
+  }, [token, authLoading]);
 
-  const loadDashboard = async (isRefresh = false) => {
+  // Filter data client-side when timeRange changes (no API call)
+  useEffect(() => {
+    if (allDataRef.current) {
+      const filteredData = filterDashboardByTimeRange(allDataRef.current, timeRange);
+      setData(filteredData);
+    }
+  }, [timeRange]);
+
+  // Load all data once (Coinbase-style: fetch all, filter client-side)
+  const loadAllData = async (isAutoRefresh = false) => {
     if (!token) {
       setLoading(false);
       setError('Authentication required');
       return;
     }
     
-    if (isRefresh) {
-      setRefreshing(true);
-    } else {
+    // Stop-gap 1: Prevent concurrent requests
+    if (isRefreshingRef.current) {
+      console.log('⏸️ Refresh already in progress, skipping...');
+      return;
+    }
+    
+    // Stop-gap 2: Enforce minimum time between refreshes
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastRefreshTimeRef.current;
+    if (timeSinceLastRefresh < MIN_REFRESH_INTERVAL_MS) {
+      const waitTime = Math.ceil((MIN_REFRESH_INTERVAL_MS - timeSinceLastRefresh) / 1000);
+      console.log(`⏸️ Rate limit: Please wait ${waitTime} second${waitTime !== 1 ? 's' : ''} before refreshing again`);
+      return;
+    }
+    
+    // Cancel any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    // Create new abort controller
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    
+    // Mark as refreshing
+    isRefreshingRef.current = true;
+    lastRefreshTimeRef.current = now;
+    
+    // Only show loading spinner on initial load, not auto-refreshes
+    if (!isAutoRefresh) {
       setLoading(true);
     }
     setError(null);
+    
     try {
-      console.log('Loading dashboard with time range:', timeRange);
-      const backendRange = timeRangeMap[timeRange];
+      console.log(`Loading all dashboard data...${isAutoRefresh ? ' (auto-refresh)' : ''}`);
       const snapshot = await dashboardApi.getSnapshot(token, {
-        time_range: backendRange as '1M' | '3M' | '1Y' | 'ALL',
+        time_range: 'ALL',
       });
-      console.log('Dashboard loaded successfully:', {
+      
+      // Check if request was aborted
+      if (abortController.signal.aborted) {
+        return;
+      }
+      
+      console.log('All dashboard data loaded successfully:', {
         total: snapshot.total.current,
+        seriesPoints: snapshot.performance.series.length,
         allocation: snapshot.allocation.length,
         activity: snapshot.activity.length,
       });
-      setData(snapshot);
+      
+      // Store all data
+      allDataRef.current = snapshot;
+      
+      // Filter for current time range
+      const filteredData = filterDashboardByTimeRange(snapshot, timeRange);
+      setData(filteredData);
     } catch (err) {
+      // Don't set error if request was aborted
+      if (abortController.signal.aborted) {
+        return;
+      }
+      
       const errorMessage = err instanceof Error ? err.message : 'Failed to load dashboard';
       console.error('Dashboard load error:', err);
-      setError(errorMessage);
-      setData(null);
+      
+      // Only show error on initial load, not auto-refreshes (to avoid annoying users)
+      if (!isAutoRefresh) {
+        setError(errorMessage);
+        setData(null);
+      }
     } finally {
-      setLoading(false);
+      isRefreshingRef.current = false;
+      if (!abortController.signal.aborted && !isAutoRefresh) {
+        setLoading(false);
+      }
+    }
+  };
+
+  // Legacy function for refresh (reloads all data)
+  const loadDashboard = async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    }
+    await loadAllData();
+    if (isRefresh) {
       setRefreshing(false);
     }
   };
@@ -143,20 +246,16 @@ export default function HomeScreen() {
     }
 
     try {
-      console.log('Refreshing dashboard with time range:', timeRange);
-      const backendRange = timeRangeMap[timeRange];
-      const snapshot = await dashboardApi.getSnapshot(token, {
-        time_range: backendRange as '1M' | '3M' | '1Y' | 'ALL',
-      });
-      console.log('Dashboard refreshed successfully');
-      // Update data first
-      setData(snapshot);
+      // Use loadAllData which has built-in rate limiting and spam prevention
+      await loadAllData(false); // false = manual refresh (shows loading state)
+      
       // Wait a bit longer to ensure the spinner animates back behind the content
       // This allows the native refresh control to complete its dismissal animation
       setTimeout(() => {
         setRefreshing(false);
       }, 300);
     } catch (err) {
+      // Error handling is done in loadAllData, but we still need to hide the spinner
       const errorMessage = err instanceof Error ? err.message : 'Failed to refresh dashboard';
       console.error('Dashboard refresh error:', err);
       setError(errorMessage);
@@ -167,8 +266,8 @@ export default function HomeScreen() {
     }
   }, [token, timeRange]);
 
-  // Get chart data based on filter
-  const getChartData = () => {
+  // Get chart data based on filter (memoized for performance)
+  const chartData = useMemo(() => {
     if (!data) return [];
     
     const series = contentFilter === 'Total'
@@ -181,7 +280,7 @@ export default function HomeScreen() {
       x: point.timestamp,
       y: point.value,
     }));
-  };
+  }, [data, contentFilter]);
 
   // Get asset color based on index
   const getAssetColor = (index: number) => {
@@ -321,7 +420,6 @@ export default function HomeScreen() {
     );
   }
 
-  const chartData = getChartData();
   const delta = data.total.delta;
   const isPositive = delta.absolute >= 0;
 
@@ -393,29 +491,28 @@ export default function HomeScreen() {
       {/* Performance Chart */}
       <View style={styles.chartContainer}>
         <Chart data={chartData} height={200} />
-      </View>
-
-      {/* Content Filters */}
-      <View style={styles.filterContainer}>
-        {(['Total', 'Assets', 'Dividends'] as ContentFilter[]).map((filter) => (
-          <TouchableOpacity
-            key={filter}
-            style={[
-              styles.filterButton,
-              contentFilter === filter && styles.filterButtonActive,
-            ]}
-            onPress={() => setContentFilter(filter)}
-          >
-            <Text
+        {/* Content Filters */}
+        <View style={styles.filterContainer}>
+          {(['Total', 'Assets', 'Dividends'] as ContentFilter[]).map((filter) => (
+            <TouchableOpacity
+              key={filter}
               style={[
-                styles.filterButtonText,
-                contentFilter === filter && styles.filterButtonTextActive,
+                styles.filterButton,
+                contentFilter === filter && styles.filterButtonActive,
               ]}
+              onPress={() => setContentFilter(filter)}
             >
-              {filter}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <Text
+                style={[
+                  styles.filterButtonText,
+                  contentFilter === filter && styles.filterButtonTextActive,
+                ]}
+              >
+                {filter}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
       {/* By Asset Section */}
@@ -576,12 +673,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   chartContainer: {
-    marginBottom: 20,
+    marginBottom: 0,
     paddingHorizontal: 0,
   },
   filterContainer: {
     flexDirection: 'row',
     paddingHorizontal: 20,
+    marginTop: 8,
     marginBottom: 24,
     gap: 8,
   },
