@@ -1,13 +1,15 @@
-import React from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, StyleSheet, Dimensions, PanResponder } from 'react-native';
 import { VictoryLine, VictoryChart, VictoryAxis, VictoryArea, VictoryContainer } from 'victory-native';
-import { Defs, LinearGradient, Stop, Pattern, Rect as SvgRect, Circle } from 'react-native-svg';
+import { Defs, LinearGradient, Stop, Pattern, Rect as SvgRect, Circle, Line } from 'react-native-svg';
 import { Colors } from '../constants/colors';
 
 interface ChartProps {
   data: { x: string | number; y: number }[];
   height?: number;
   patternType?: 'diagonal' | 'dots' | 'crosshatch' | 'horizontal' | 'vertical' | 'none';
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
 }
 
 const screenWidth = Dimensions.get('window').width;
@@ -152,7 +154,54 @@ const GradientContainer = ({ patternType = 'diagonal', ...props }: any) => {
   );
 };
 
-export default function Chart({ data, height = 200, patternType = 'dots' }: ChartProps) {
+export default function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEnd }: ChartProps) {
+  const [dragX, setDragX] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const chartContainerRef = useRef<View>(null);
+  const isDraggingRef = useRef(false);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderGrant: (evt) => {
+        const { locationX } = evt.nativeEvent;
+        setDragX(locationX);
+        setIsDragging(true);
+        isDraggingRef.current = true;
+        onDragStart?.();
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        const { locationX } = evt.nativeEvent;
+        // Constrain to chart bounds
+        const constrainedX = Math.max(0, Math.min(screenWidth, locationX));
+        setDragX(constrainedX);
+      },
+      onPanResponderRelease: () => {
+        setDragX(null);
+        setIsDragging(false);
+        isDraggingRef.current = false;
+        onDragEnd?.();
+      },
+      onPanResponderTerminate: () => {
+        setDragX(null);
+        setIsDragging(false);
+        isDraggingRef.current = false;
+        onDragEnd?.();
+      },
+      onPanResponderTerminationRequest: () => {
+        // Never allow parent ScrollView to take over the gesture
+        return false;
+      },
+      onShouldBlockNativeResponder: () => {
+        // Always block native responder to prevent ScrollView from scrolling
+        return true;
+      },
+    })
+  ).current;
+
   if (!data || data.length === 0) {
     return (
       <View style={[styles.container, { height }]}>
@@ -162,7 +211,22 @@ export default function Chart({ data, height = 200, patternType = 'dots' }: Char
   }
 
   return (
-    <View style={[styles.container, { height }]}>
+    <View 
+      style={[styles.container, { height }]}
+      ref={chartContainerRef}
+      collapsable={false}
+      onTouchStart={(evt) => {
+        // Immediately disable scrolling when touch starts
+        onDragStart?.();
+      }}
+      onTouchEnd={() => {
+        onDragEnd?.();
+      }}
+      onTouchCancel={() => {
+        onDragEnd?.();
+      }}
+      {...panResponder.panHandlers}
+    >
       <VictoryChart
         width={screenWidth}
         height={height}
@@ -237,6 +301,12 @@ export default function Chart({ data, height = 200, patternType = 'dots' }: Char
           tickFormat={() => ''}
         />
       </VictoryChart>
+      {/* Interactive vertical line - appears on drag */}
+      {isDragging && dragX !== null && (
+        <View style={[styles.verticalLineContainer, { height }]} pointerEvents="none">
+          <View style={[styles.verticalLine, { left: dragX }]} />
+        </View>
+      )}
     </View>
   );
 }
@@ -246,10 +316,26 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'stretch',
     justifyContent: 'center',
+    position: 'relative',
   },
   emptyText: {
     fontSize: 14,
     color: Colors.textSecondary,
     textAlign: 'center',
+  },
+  verticalLineContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    width: '100%',
+    pointerEvents: 'none',
+  },
+  verticalLine: {
+    position: 'absolute',
+    width: 1,
+    height: '100%',
+    backgroundColor: Colors.chartOrange,
+    top: 20, // Match chart padding
   },
 });

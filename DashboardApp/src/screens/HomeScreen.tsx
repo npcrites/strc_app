@@ -51,6 +51,7 @@ export default function HomeScreen() {
   const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
   const [contentFilter, setContentFilter] = useState<ContentFilter>('Total');
   const [error, setError] = useState<string | null>(null);
+  const [scrollEnabled, setScrollEnabled] = useState(true);
   
   // Store all data for client-side filtering (Coinbase-style)
   const allDataRef = useRef<DashboardSnapshot | null>(null);
@@ -432,6 +433,9 @@ export default function HomeScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) + 80 }}
         bounces={true}
         alwaysBounceVertical={true}
+        scrollEnabled={scrollEnabled}
+        nestedScrollEnabled={false}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -490,7 +494,12 @@ export default function HomeScreen() {
 
       {/* Performance Chart */}
       <View style={styles.chartContainer}>
-        <Chart data={chartData} height={200} />
+        <Chart 
+          data={chartData} 
+          height={200} 
+          onDragStart={() => setScrollEnabled(false)}
+          onDragEnd={() => setScrollEnabled(true)}
+        />
         {/* Content Filters */}
         <View style={styles.filterContainer}>
           {(['Total', 'Assets', 'Dividends'] as ContentFilter[]).map((filter) => (
