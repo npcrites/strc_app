@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   StatusBar,
   RefreshControl,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AnimatedNumbers from 'react-native-animated-numbers';
@@ -42,12 +43,20 @@ const formatPortfolioLabel = (fullName?: string): string => {
 export default function HomeScreen() {
   const { token, loading: authLoading, user } = useAuth();
   const insets = useSafeAreaInsets();
+  const screenWidth = Dimensions.get('window').width;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<DashboardSnapshot | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
   const [contentFilter, setContentFilter] = useState<ContentFilter>('Total');
   const [error, setError] = useState<string | null>(null);
+
+  // Calculate responsive scale factor (base: 375px iPhone standard)
+  const scaleFactor = screenWidth / 375;
+  
+  // Responsive alignment values
+  const deltaPaddingLeft = 3 * scaleFactor;
+  const arrowMarginLeft = 0.5 * scaleFactor;
 
   const timeRangeMap: Record<TimeRange, string> = {
     '1W': '1M', // Backend uses 1M, 3M, 1Y, ALL
@@ -348,8 +357,8 @@ export default function HomeScreen() {
             />
           </View>
         </View>
-        <View style={styles.deltaContainer}>
-          <Text style={[styles.deltaArrow, isPositive ? styles.deltaTextPositive : styles.deltaTextNegative]}>
+        <View style={[styles.deltaContainer, { paddingLeft: deltaPaddingLeft }]}>
+          <Text style={[styles.deltaArrow, { marginLeft: arrowMarginLeft }, isPositive ? styles.deltaTextPositive : styles.deltaTextNegative]}>
             {isPositive ? '↑' : '↓'}
           </Text>
           <Text style={[styles.deltaText, isPositive ? styles.deltaTextPositive : styles.deltaTextNegative]}>
@@ -521,13 +530,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'baseline',
     marginTop: 2,
-    paddingLeft: 3, // Align with dollar sign and first digit
+    // paddingLeft calculated dynamically based on screen size
   },
   deltaArrow: {
     fontSize: 18,
     fontWeight: '600',
     lineHeight: 16,
-    marginLeft: 0.5, // Shift arrow 0.5px to the right
+    // marginLeft calculated dynamically based on screen size
     marginRight: 4,
     marginBottom: -1, // Slight adjustment to align with text baseline
   },
