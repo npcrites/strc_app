@@ -1,10 +1,9 @@
-import React, { useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useCallback, useMemo, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Dimensions,
-  Platform,
   TouchableOpacity,
   PanResponder,
   Animated,
@@ -31,7 +30,7 @@ const tabs: Tab[] = [
 ];
 
 const TAB_BAR_POSITION_KEY = '@tab_bar_position';
-const SNAP_THRESHOLD = 50; // Distance from edge to trigger snap
+const MARGIN = 16;
 
 export default function CustomTabBar({
   state,
@@ -39,19 +38,20 @@ export default function CustomTabBar({
   navigation,
 }: CustomTabBarProps) {
   const insets = useSafeAreaInsets();
-  const bottomPadding = Math.max(insets.bottom, 12);
   const screenWidth = Dimensions.get('window').width;
   
-  // Calculate snap positions (left and right)
-  const leftPosition = 16;
-  const rightPosition = screenWidth - 16; // Will be adjusted by tab bar width
+  // === STATE (single source of truth) ===
+  const [positionIndex, setPositionIndex] = useState<number>(0); // 0 = left, 1 = right
+  const [containerWidth, setContainerWidth] = useState<number>(200);
+  const [isLayoutMeasured, setIsLayoutMeasured] = useState<boolean>(false);
   
-  // Measure container width (will be updated after first render)
-  const containerWidth = useRef(200); // Initial estimate
-  
-  // Position state (0 = left, 1 = right)
-  const positionIndex = useRef(0);
-  const translateX = useRef(new Animated.Value(leftPosition)).current;
+  // === REFS (transient only) ===
+  const translateX = useRef(new Animated.Value(MARGIN)).current;
+  const isAnimating = useRef(false);
+  const dragStartX = useRef(0);
+  const isDragging = useRef(false);
+  const latestMeasuredWidth = useRef<number>(200); // Track most recent measured width
+  const skipNextEffect = useRef(false); // Skip useEffect after drag completes
 
   // Load saved position on mount
   useEffect(() => {
@@ -60,10 +60,8 @@ export default function CustomTabBar({
         const savedPosition = await AsyncStorage.getItem(TAB_BAR_POSITION_KEY);
         if (savedPosition !== null) {
           const index = parseInt(savedPosition, 10);
-          positionIndex.current = index;
-          // Calculate actual right position after we know container width
-          const rightPos = screenWidth - containerWidth.current - 16;
-          translateX.setValue(index === 0 ? leftPosition : rightPos);
+          setPositionIndex(index);
+          console.log('📍 Loaded saved position from storage:', index === 0 ? 'left' : 'right');
         }
       } catch (error) {
         console.error('Failed to load tab bar position:', error);
@@ -72,20 +70,84 @@ export default function CustomTabBar({
     loadPosition();
   }, []);
 
-  // Save position preference
+  // Calculate target X based on positionIndex and containerWidth
+  const getTargetX = useCallback((): number => {
+    if (positionIndex === 0) {
+      console.log('📍 getTargetX: LEFT =', MARGIN);
+      return MARGIN;
+    } else {
+      const rightX = screenWidth - containerWidth - MARGIN;
+      console.log('📍 getTargetX: RIGHT =', rightX, '(', screenWidth, '-', containerWidth, '-', MARGIN, ')');
+      return rightX;
+    }
+  }, [positionIndex, screenWidth, containerWidth]);
+
+  // Helper to calculate target X for a given index (used in release handler)
+  const calculateTargetX = useCallback((index: number, width: number): number => {
+    if (index === 0) {
+      return MARGIN;
+    } else {
+      return screenWidth - width - MARGIN;
+    }
+  }, [screenWidth]);
+
+  // Animation effect: watches positionIndex, animates when it changes
+  useEffect(() => {
+    // CRITICAL: Check skipNextEffect FIRST, before any other checks
+    // This must be the absolute first check to prevent any interference
+    if (skipNextEffect.current) {
+      console.log('⏳ BLOCKED: useEffect skipped - drag just completed, using direct animation');
+      return; // Exit immediately, don't do anything
+    }
+
+    if (!isLayoutMeasured) {
+      console.log('⏳ Skipping animation - layout not measured yet');
+      return;
+    }
+
+    // Don't animate if we're currently dragging (user is in control)
+    if (isDragging.current) {
+      console.log('⏳ Skipping animation - user is dragging');
+      return;
+    }
+
+    // Don't animate if we're already animating (prevent double animations)
+    if (isAnimating.current) {
+      console.log('⏳ Skipping animation - already animating');
+      return;
+    }
+
+    const targetX = getTargetX();
+    
+    // Stop any ongoing animation first
+    translateX.stopAnimation();
+    
+    console.log('🎬 Starting animation to:', positionIndex === 0 ? 'left' : 'right', 'targetX:', targetX);
+
+    isAnimating.current = true;
+    Animated.spring(translateX, {
+      toValue: targetX,
+      useNativeDriver: true,
+      tension: 100, // Increased for snappier animation
+      friction: 15, // Reduced for faster animation
+    }).start(() => {
+      isAnimating.current = false;
+      // Ensure final position is exactly correct
+      const finalX = getTargetX();
+      translateX.setValue(finalX);
+      console.log('✅ Animation complete, final position:', finalX);
+    });
+  }, [positionIndex, isLayoutMeasured, getTargetX, translateX]);
+
+  // Save position to storage
   const savePosition = useCallback(async (index: number) => {
     try {
       await AsyncStorage.setItem(TAB_BAR_POSITION_KEY, index.toString());
+      console.log('💾 Saved position to storage:', index === 0 ? 'left' : 'right');
     } catch (error) {
       console.error('Failed to save tab bar position:', error);
     }
   }, []);
-
-  // Memoize focused route to avoid unnecessary re-renders
-  const focusedRoute = useMemo(
-    () => state.routes[state.index],
-    [state.routes, state.index]
-  );
 
   const handlePress = useCallback(
     (route: any, isFocused: boolean) => {
@@ -112,131 +174,208 @@ export default function CustomTabBar({
     [navigation]
   );
 
-  // Track drag state
-  const dragStartX = useRef(0);
-  const isDragging = useRef(false);
-  
-  // PanResponder for dragging - use useMemo to ensure fresh closures
+  // PanResponder for dragging
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: (evt, gestureState) => {
-          // Only start if horizontal movement is significant
           return Math.abs(gestureState.dx) > 10;
         },
         onMoveShouldSetPanResponder: (evt, gestureState) => {
-          // Start dragging if horizontal movement exceeds threshold
-          return Math.abs(gestureState.dx) > 10 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy);
+          return (
+            Math.abs(gestureState.dx) > 10 &&
+            Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
+          );
         },
-        onPanResponderGrant: (evt) => {
-          // Store starting position
+        onPanResponderGrant: () => {
           translateX.stopAnimation((value) => {
             dragStartX.current = value;
           });
           isDragging.current = true;
-          console.log('🔄 Drag started');
+          isAnimating.current = false;
+          console.log('🔄 Drag started from x:', dragStartX.current);
         },
         onPanResponderMove: (evt, gestureState) => {
           if (isDragging.current) {
-            // Calculate new position
             const newX = dragStartX.current + gestureState.dx;
-            
-            // Constrain to screen bounds
             const minX = 0;
-            const width = containerWidth.current || 200; // Fallback if not measured yet
-            const maxX = screenWidth - width;
-            translateX.setValue(Math.max(minX, Math.min(maxX, newX)));
+            const maxX = screenWidth - containerWidth;
+            const constrainedX = Math.max(minX, Math.min(maxX, newX));
+            translateX.setValue(constrainedX);
           }
         },
-        onPanResponderRelease: (evt, gestureState) => {
-          isDragging.current = false;
+        onPanResponderRelease: () => {
+          // Get current position and stop any animation
           let currentX = 0;
           translateX.stopAnimation((value) => {
             currentX = value;
           });
           
-          const width = containerWidth.current || 200; // Fallback if not measured yet
-          const centerX = screenWidth / 2;
+          // Use the most recently measured width (always up-to-date)
+          const widthToUse = latestMeasuredWidth.current || containerWidth;
           
-          // Determine which side to snap to based on current position
-          let targetIndex: number;
-          let targetX: number;
+          // Calculate which side to snap to
+          const screenCenterX = screenWidth / 2;
+          const tabBarCenterX = currentX + widthToUse / 2;
           
-          // Check if we're closer to left or right side
-          if (currentX < centerX) {
-            targetIndex = 0;
-            targetX = leftPosition;
-          } else {
-            targetIndex = 1;
-            // Right position: screen width - container width - right margin
-            const rightMargin = 16;
-            targetX = screenWidth - width - rightMargin;
-            console.log('📐 Right snap calculation:', {
+          console.log('🎯 Release decision:', {
+            tabBarCenterX,
+            screenCenterX,
+            'tabBarCenterX < screenCenterX': tabBarCenterX < screenCenterX,
+            currentX,
+            containerWidth,
+            latestMeasuredWidth: latestMeasuredWidth.current,
+            widthToUse,
+            screenWidth,
+          });
+
+          const newIndex = tabBarCenterX < screenCenterX ? 0 : 1;
+          
+          // Calculate target X using helper function with most recent width
+          const targetX = calculateTargetX(newIndex, widthToUse);
+          
+          // Verify the calculation
+          const expectedRightEdge = screenWidth - MARGIN;
+          const actualRightEdge = targetX + widthToUse;
+          const isCorrect = newIndex === 0 || Math.abs(actualRightEdge - expectedRightEdge) < 1;
+
+          console.log('📌 Snapping to:', newIndex === 0 ? 'LEFT' : 'RIGHT', {
+            targetX,
+            screenWidth,
+            containerWidth,
+            widthToUse,
+            MARGIN,
+            calculation: newIndex === 0 
+              ? `LEFT: ${MARGIN}`
+              : `RIGHT: ${screenWidth} - ${widthToUse} - ${MARGIN} = ${targetX}`,
+            'Right edge will be at': newIndex === 1 ? `${actualRightEdge} (should be ${expectedRightEdge}, diff: ${Math.abs(actualRightEdge - expectedRightEdge)})` : 'N/A',
+            'Calculation correct': isCorrect,
+          });
+          
+          if (!isCorrect && newIndex === 1) {
+            console.error('❌ RIGHT SIDE CALCULATION ERROR!', {
               screenWidth,
-              containerWidth: width,
-              rightMargin,
+              widthToUse,
+              MARGIN,
               targetX,
-              currentX,
-              centerX,
+              actualRightEdge,
+              expectedRightEdge,
             });
           }
+
+          // Mark dragging as false BEFORE starting animation
+          isDragging.current = false;
           
-          // Animate to target position
+          // CRITICAL: Set flag to skip useEffect BEFORE any state updates
+          // This must happen before setPositionIndex is called
+          skipNextEffect.current = true;
+          console.log('🚫 Set skipNextEffect = true to block useEffect');
+
+          // Update state IMMEDIATELY (before animation) so positionIndex is correct
+          // But skipNextEffect will prevent useEffect from running
+          console.log('🔄 Updating state to:', newIndex === 0 ? 'LEFT' : 'RIGHT', 'BEFORE animation');
+          setPositionIndex(newIndex);
+          savePosition(newIndex);
+
+          // Start animation immediately (don't wait for useEffect)
+          isAnimating.current = true;
           Animated.spring(translateX, {
             toValue: targetX,
             useNativeDriver: true,
-            tension: 90,
-            friction: 20,
-          }).start();
-          
-          // Update position index and save
-          positionIndex.current = targetIndex;
-          savePosition(targetIndex);
-          console.log('✅ Drag ended, snapped to:', targetIndex === 0 ? 'left' : 'right', 'at x:', targetX, 'from x:', currentX);
+            tension: 100,
+            friction: 15,
+          }).start(() => {
+            isAnimating.current = false;
+            
+            // Get current animated value
+            let finalX = targetX;
+            translateX.stopAnimation((value) => {
+              finalX = value;
+            });
+            
+            // Verify final position is correct
+            const expectedX = targetX;
+            const isPositionCorrect = Math.abs(finalX - expectedX) < 1;
+            
+            // Ensure final position is exactly correct
+            translateX.setValue(targetX);
+            console.log('✅ Snap animation complete', {
+              finalPosition: targetX,
+              animatedValue: finalX,
+              isPositionCorrect,
+              side: newIndex === 0 ? 'LEFT' : 'RIGHT',
+              'skipNextEffect still': skipNextEffect.current,
+            });
+            
+            if (!isPositionCorrect) {
+              console.error('❌ Position mismatch after animation!', {
+                expected: targetX,
+                actual: finalX,
+                diff: Math.abs(finalX - expectedX),
+              });
+            }
+            
+            // Keep skipNextEffect true for a bit longer to ensure useEffect doesn't run
+            // Reset it after React has fully processed the state update
+            setTimeout(() => {
+              skipNextEffect.current = false;
+              console.log('🔄 Reset skipNextEffect flag (after', 100, 'ms)');
+            }, 100);
+          });
         },
       }),
-    [screenWidth, leftPosition, savePosition]
+    [screenWidth, containerWidth, translateX, savePosition, calculateTargetX]
   );
-
-  // Animated style for the container
-  const animatedStyle = {
-    transform: [{ translateX }],
-  };
 
   // Measure container width on layout
   const handleLayout = useCallback((event: any) => {
     const { width } = event.nativeEvent.layout;
-    containerWidth.current = width;
-    console.log('📏 Container width measured:', width, 'screenWidth:', screenWidth);
     
-    // Update position if we're on the right side
-    if (positionIndex.current === 1) {
-      const rightPos = screenWidth - width - 16;
-      translateX.setValue(rightPos);
-      console.log('📍 Setting right position:', rightPos);
+    // Always update the ref with the latest measured width
+    latestMeasuredWidth.current = width;
+
+    if (!isLayoutMeasured) {
+      // First measurement
+      console.log('📏 First layout measurement:', width);
+      setContainerWidth(width);
+      setIsLayoutMeasured(true);
+      
+      // Set initial animated value based on positionIndex
+      const initialX = positionIndex === 0 ? MARGIN : screenWidth - width - MARGIN;
+      translateX.setValue(initialX);
+      console.log('📍 Set initial position:', positionIndex === 0 ? 'LEFT' : 'RIGHT', 'x:', initialX);
+      return;
     }
-  }, [screenWidth]);
+
+    // Subsequent measurements (e.g., rotation)
+    const widthDiff = Math.abs(containerWidth - width);
+    if (widthDiff > 5 && !isDragging.current && !isAnimating.current) {
+      console.log('📏 Width changed:', containerWidth, '→', width);
+      setContainerWidth(width);
+      // The animation effect will re-run and adjust position
+    }
+  }, [isLayoutMeasured, containerWidth, positionIndex, screenWidth, translateX]);
 
   return (
     <Animated.View
       style={[
         styles.container,
         {
-          bottom: Math.max(bottomPadding, 16),
-          left: 0, // Start from left edge, use translateX for positioning
+          bottom: Math.max(insets.bottom, 12) + 16,
+          left: 0,
         },
-        animatedStyle,
+        {
+          transform: [{ translateX }],
+        },
       ]}
       onLayout={handleLayout}
       {...panResponder.panHandlers}
     >
-      {/* Drag handle area - invisible but captures drag gestures */}
       <View style={styles.dragHandle} />
       <View style={styles.tabBar}>
         {state.routes.map((route: any, index: number) => {
           const { options } = descriptors[route.key];
           const isFocused = state.index === index;
-
           const tab = tabs.find((t) => t.name === route.name);
 
           return (
@@ -254,13 +393,17 @@ export default function CustomTabBar({
               <View
                 style={[
                   styles.tabButtonInner,
-                  isFocused ? styles.tabButtonActive : styles.tabButtonInactive,
+                  isFocused
+                    ? styles.tabButtonActive
+                    : styles.tabButtonInactive,
                 ]}
               >
                 <Text
                   style={[
                     styles.tabIcon,
-                    isFocused ? styles.tabIconActive : styles.tabIconInactive,
+                    isFocused
+                      ? styles.tabIconActive
+                      : styles.tabIconInactive,
                   ]}
                 >
                   {tab?.icon || '•'}
@@ -268,7 +411,9 @@ export default function CustomTabBar({
                 <Text
                   style={[
                     styles.tabLabel,
-                    isFocused ? styles.tabLabelActive : styles.tabLabelInactive,
+                    isFocused
+                      ? styles.tabLabelActive
+                      : styles.tabLabelInactive,
                   ]}
                 >
                   {tab?.label || route.name}
@@ -289,7 +434,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     paddingHorizontal: 8,
     paddingVertical: 8,
-    // Shadow for iOS
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -297,12 +441,11 @@ const styles = StyleSheet.create({
     },
     shadowOpacity: 0.1,
     shadowRadius: 8,
-    // Elevation for Android
     elevation: 8,
   },
   dragHandle: {
     position: 'absolute',
-    top: -20, // Extend beyond container
+    top: -20,
     left: -20,
     right: -20,
     bottom: -20,
@@ -318,9 +461,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  tabButtonPressed: {
-    opacity: 0.7,
-  },
   tabButtonInner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -332,16 +472,15 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tabButtonActive: {
-    backgroundColor: Colors.backgroundGrey, // Light gray background for active
+    backgroundColor: Colors.backgroundGrey,
   },
   tabButtonInactive: {
-    backgroundColor: Colors.backgroundWhite, // White background for inactive
+    backgroundColor: Colors.backgroundWhite,
   },
   tabIcon: {
     fontSize: 20,
   },
   tabIconActive: {
-    // Blue color for active icon
     color: '#007AFF',
   },
   tabIconInactive: {
@@ -352,11 +491,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   tabLabelActive: {
-    // Blue color for active label
     color: '#007AFF',
   },
   tabLabelInactive: {
     color: Colors.textPrimary,
   },
 });
-
