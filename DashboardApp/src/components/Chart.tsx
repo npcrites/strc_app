@@ -1,290 +1,68 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, Dimensions, PanResponder } from 'react-native';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { View, Text, StyleSheet, Dimensions, PanResponder, Animated } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
-import Svg, { Defs, Pattern, Circle, Rect as SvgRect, LinearGradient, Stop, Mask, ClipPath, Path } from 'react-native-svg';
+import Svg, { Defs, Pattern, Circle, Rect as SvgRect, LinearGradient, Stop, Mask, ClipPath, Path, Line, G } from 'react-native-svg';
 import { Colors } from '../constants/colors';
 
 type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
+type PatternType = 'diagonal' | 'dots' | 'crosshatch' | 'horizontal' | 'vertical' | 'none';
 
-interface ChartProps {
+export interface ChartConfig {
+  // Visual styling
+  lineColor?: string;
+  lineThickness?: number;
+  gradientStartColor?: string;
+  gradientEndColor?: string;
+  gradientStartOpacity?: number;
+  gradientEndOpacity?: number;
+  patternColor?: string;
+  patternOpacity?: number;
+  patternSize?: number;
+  
+  // Chart behavior
+  curved?: boolean;
+  showDots?: boolean;
+  enableDrag?: boolean;
+  
+  // Fade effect configuration (for drag interaction)
+  fadeMode?: 'none' | 'future' | 'past'; // 'future' = fade right side, 'past' = fade left side
+  fadeIntensity?: number; // 0-1, opacity of faded region (default 0.5)
+  
+  // Performance
+  maxDataPoints?: number;
+  throttleMs?: number;
+}
+
+export interface ChartProps {
   data: { x: string | number; y: number }[];
   height?: number;
-  patternType?: 'diagonal' | 'dots' | 'crosshatch' | 'horizontal' | 'vertical' | 'none';
+  width?: number;
+  patternType?: PatternType;
   onDragStart?: () => void;
   onDragEnd?: () => void;
   timeRange?: TimeRange;
+  config?: ChartConfig;
+  testID?: string;
 }
 
 const screenWidth = Dimensions.get('window').width;
 
-// Downsample data for performance - extremely aggressive for large timeframes
-// Coinbase/Stocks apps typically use 50-60 points max for smooth performance
-const downsampleData = (data: { x: string | number; y: number }[], timeRange?: TimeRange): { x: string | number; y: number }[] => {
-  // Use different limits based on time range for optimal performance
-  let maxPoints: number;
-  switch (timeRange) {
-    case '1W':
-      maxPoints = 150; // More points for short timeframes
-      break;
-    case '1M':
-      maxPoints = 100;
-      break;
-    case '3M':
-      maxPoints = 60; // Very aggressive downsampling for large timeframes
-      break;
-    case '1Y':
-    case 'ALL':
-      maxPoints = 50; // Extremely aggressive for largest timeframes (like Coinbase)
-      break;
-    default:
-      maxPoints = 100;
-  }
-
-  if (data.length <= maxPoints) {
-    return data;
-  }
-
-  const result: { x: string | number; y: number }[] = [];
-  const step = data.length / maxPoints;
-  
-  // Always include first point
-  result.push(data[0]);
-  
-  // Sample points evenly - this is fast and preserves overall shape
-  for (let i = 1; i < maxPoints - 1; i++) {
-    const index = Math.round(i * step);
-    if (index < data.length) {
-      result.push(data[index]);
-    }
-  }
-  
-  // Always include last point
-  if (data.length > 1) {
-    result.push(data[data.length - 1]);
-  }
-  
-  return result;
-};
-
-// Convert data to format expected by react-native-gifted-charts
-const convertToChartData = (data: { x: string | number; y: number }[]) => {
-  if (!data || data.length === 0) {
-    console.log('convertToChartData: No data provided');
-    return [];
-  }
-  // react-native-gifted-charts expects data in format: { value: number, label?: string }
-  const converted = data.map((point) => ({
-    value: point.y,
-    // Don't include label if empty - might cause issues
-  }));
-  console.log('convertToChartData: Converted', data.length, 'points, sample:', converted.slice(0, 3));
-  return converted;
-};
-
-// Generate smooth cubic Bezier path (matches react-native-gifted-charts curve algorithm)
-// This creates a path that matches the chart line exactly
-const generateChartPath = (
-  data: { value: number }[],
-  width: number,
-  height: number,
-  minValue: number,
-  maxValue: number,
-  curved: boolean = true
-): { linePath: string; areaPath: string } => {
-  if (data.length === 0) return { linePath: '', areaPath: '' };
-  
-  const valueRange = maxValue - minValue || 1;
-  const padding = valueRange * 0.1; // 10% padding
-  const adjustedMin = minValue - padding;
-  const adjustedMax = maxValue + padding;
-  const adjustedRange = adjustedMax - adjustedMin || 1;
-  
-  const spacing = data.length > 1 ? width / (data.length - 1) : 0;
-  
-  // Calculate all points first
-  const points: { x: number; y: number }[] = [];
-  for (let i = 0; i < data.length; i++) {
-    const x = i * spacing;
-    const y = height - ((data[i].value - adjustedMin) / adjustedRange) * height;
-    points.push({ x, y });
-  }
-  
-  let linePath = '';
-  let areaPath = '';
-  
-  // Start at first point
-  linePath += `M ${points[0].x} ${points[0].y}`;
-  areaPath += `M ${points[0].x} ${points[0].y}`;
-  
-  if (curved && data.length > 2) {
-    // Use cubic Bezier curves for smooth lines (similar to react-native-gifted-charts)
-    for (let i = 0; i < points.length - 1; i++) {
-      const current = points[i];
-      const next = points[i + 1];
-      
-      if (i === 0) {
-        // First segment: use current point and next point
-        const cp1x = current.x + (next.x - current.x) / 3;
-        const cp1y = current.y;
-        const cp2x = current.x + 2 * (next.x - current.x) / 3;
-        const cp2y = next.y;
-        linePath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
-        areaPath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
-      } else if (i === points.length - 2) {
-        // Last segment: smooth curve to end
-        const prev = points[i - 1];
-        const cp1x = current.x + (next.x - current.x) / 3;
-        const cp1y = current.y;
-        const cp2x = current.x + 2 * (next.x - current.x) / 3;
-        const cp2y = next.y;
-        linePath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
-        areaPath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
-      } else {
-        // Middle segments: smooth curves using neighboring points
-        const prev = points[i - 1];
-        const afterNext = points[i + 2];
-        
-        // Control points for smooth cubic Bezier
-        const cp1x = current.x + (next.x - prev.x) / 6;
-        const cp1y = current.y + (next.y - prev.y) / 6;
-        const cp2x = next.x - (afterNext.x - current.x) / 6;
-        const cp2y = next.y - (afterNext.y - current.y) / 6;
-        
-        linePath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
-        areaPath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
-      }
-    }
-  } else {
-    // Straight lines
-    for (let i = 1; i < points.length; i++) {
-      linePath += ` L ${points[i].x} ${points[i].y}`;
-      areaPath += ` L ${points[i].x} ${points[i].y}`;
-    }
-  }
-  
-  // Close area path to bottom to create fill area
-  areaPath += ` L ${width} ${height} L 0 ${height} Z`;
-  
-  return { linePath, areaPath };
-};
-
-// Custom chart overlay with line, gradient fill, and dots pattern
-// Uses the same path for line, fill, and clipPath - ensures perfect matching
-const ChartOverlay = ({ 
-  width, 
-  height, 
-  chartData, 
-  minValue, 
-  maxValue, 
-  patternType 
-}: { 
-  width: number; 
-  height: number; 
-  chartData: { value: number }[]; 
-  minValue: number; 
-  maxValue: number; 
-  patternType: string;
-}) => {
-  if (chartData.length === 0) return null;
-  
-  // Generate both line and area paths using the same algorithm
-  const { linePath, areaPath } = generateChartPath(chartData, width, height, minValue, maxValue, true);
-  
-  // Create dots pattern
-  const dotsPattern = patternType === 'dots' ? (
-    <Pattern id="dotsPattern" patternUnits="userSpaceOnUse" width="12" height="12">
-      <Circle cx="6" cy="6" r="2" fill={Colors.chartOrange} fillOpacity="0.15" />
-    </Pattern>
-  ) : null;
-  
-  return (
-    <Svg style={StyleSheet.absoluteFill} width={width} height={height}>
-      <Defs>
-        {dotsPattern}
-        {/* Gradient fill matching chart's gradient */}
-        <LinearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-          <Stop offset="0%" stopColor={Colors.chartOrange + '4D'} stopOpacity="0.3" />
-          <Stop offset="100%" stopColor={Colors.background + '00'} stopOpacity="0" />
-        </LinearGradient>
-        {/* Gradient mask for dots - fades from visible at top to transparent at bottom */}
-        {/* Matches the chart's gradient fade: 0.3 opacity at top → 0 at bottom */}
-        <LinearGradient id="dotsFadeMask" x1="0%" y1="0%" x2="0%" y2="100%">
-          <Stop offset="0%" stopColor="white" stopOpacity="1" />
-          <Stop offset="10%" stopColor="white" stopOpacity="0.9" />
-          <Stop offset="20%" stopColor="white" stopOpacity="0.8" />
-          <Stop offset="30%" stopColor="white" stopOpacity="0.7" />
-          <Stop offset="40%" stopColor="white" stopOpacity="0.6" />
-          <Stop offset="50%" stopColor="white" stopOpacity="0.5" />
-          <Stop offset="60%" stopColor="white" stopOpacity="0.4" />
-          <Stop offset="70%" stopColor="white" stopOpacity="0.3" />
-          <Stop offset="80%" stopColor="white" stopOpacity="0.2" />
-          <Stop offset="90%" stopColor="white" stopOpacity="0.1" />
-          <Stop offset="100%" stopColor="white" stopOpacity="0" />
-        </LinearGradient>
-        {/* Mask that applies the fade gradient to dots */}
-        <Mask id="dotsFadeMaskApplied">
-          <SvgRect width={width} height={height} fill="url(#dotsFadeMask)" />
-        </Mask>
-        {/* ClipPath for dots - uses the same area path as the fill */}
-        <ClipPath id="areaClip">
-          <Path d={areaPath} />
-        </ClipPath>
-      </Defs>
-      {/* Chart line - rendered first so it's on top */}
-      <Path 
-        d={linePath} 
-        stroke={Colors.chartOrange}
-        strokeWidth={3}
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* Gradient fill using the area path */}
-      <Path 
-        d={areaPath} 
-        fill="url(#areaGradient)"
-      />
-      {/* Dots pattern clipped to the same area path and faded vertically */}
-      {patternType === 'dots' && (
-        <SvgRect
-          width={width}
-          height={height}
-          fill="url(#dotsPattern)"
-          clipPath="url(#areaClip)"
-          mask="url(#dotsFadeMaskApplied)"
-        />
-      )}
-    </Svg>
-  );
-};
-
-function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEnd, timeRange = '1Y' }: ChartProps) {
-  const [dragX, setDragX] = useState<number | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const chartContainerRef = useRef<View>(null);
-  const isDraggingRef = useRef(false);
-  const dragXRef = useRef<number | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const lastUpdateTimeRef = useRef<number>(0);
-  const THROTTLE_MS = 16; // ~60fps
-
-  // Downsample data for performance on large datasets - much more aggressive
+// ============================================================================
+// INTERNAL MODULE A: useChartData()
+// Handles all data processing: downsampling, min/max, spacing, snap points
+// ============================================================================
+function useChartData(
+  data: { x: string | number; y: number }[],
+  timeRange: TimeRange,
+  width: number
+) {
+  // Downsample data for performance
   const downsampledData = useMemo(() => downsampleData(data, timeRange), [data, timeRange]);
 
   // Convert to chart format
   const chartData = useMemo(() => {
-    const converted = convertToChartData(downsampledData);
-    // Debug: Log to verify data is being converted
-    console.log('Chart data check:', {
-      downsampledLength: downsampledData.length,
-      convertedLength: converted.length,
-      firstPoint: converted[0],
-      lastPoint: converted[converted.length - 1],
-      height,
-      width: screenWidth + 40
-    });
-    return converted;
-  }, [downsampledData, height]);
+    return convertToChartData(downsampledData);
+  }, [downsampledData]);
 
   // Calculate min/max for the chart
   const minValue = useMemo(() => {
@@ -299,8 +77,10 @@ function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEn
     return Math.max(...values);
   }, [downsampledData]);
 
-  const valueRange = maxValue - minValue;
-  const padding = valueRange * 0.1; // 10% padding
+  // Calculate spacing between data points
+  const spacing = useMemo(() => {
+    return chartData.length > 1 ? width / (chartData.length - 1) : 0;
+  }, [chartData.length, width]);
 
   // Get the interval in milliseconds based on time range
   const getIntervalMs = useCallback((range: TimeRange): number => {
@@ -319,8 +99,8 @@ function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEn
     }
   }, []);
 
-  // Filter data points to only those that match the interval - optimized for performance
-  const getSnapPoints = useMemo(() => {
+  // Pre-compute snap points for drag interaction
+  const snapPoints = useMemo(() => {
     if (downsampledData.length === 0) return [];
     
     const intervalMs = getIntervalMs(timeRange);
@@ -425,31 +205,113 @@ function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEn
     return { minTime, maxTime };
   }, [downsampledData]);
 
-  // Find the nearest snap point to a given x position - optimized with binary search
+  return {
+    chartData,
+    downsampledData,
+    minValue,
+    maxValue,
+    spacing,
+    snapPoints: snapPoints,
+    timeBounds,
+  };
+}
+
+// ============================================================================
+// INTERNAL MODULE B: useChartDrag()
+// Handles drag interaction: hold logic, pan responder, animated values, lifecycle
+// ============================================================================
+function useChartDrag({
+  width,
+  height,
+  chartData,
+  minValue,
+  maxValue,
+  spacing,
+  snapPoints,
+  timeBounds,
+  onDragStart,
+  onDragEnd,
+}: {
+  width: number;
+  height: number;
+  chartData: { value: number }[];
+  minValue: number;
+  maxValue: number;
+  spacing: number;
+  snapPoints: { x: string | number; y: number; timestamp: number }[];
+  timeBounds: { minTime: number; maxTime: number };
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
+}) {
+  // Native-driven animated values for drag feedback (no React re-renders)
+  const dragXAnimated = useRef(new Animated.Value(0)).current;
+  const dotYAnimated = useRef(new Animated.Value(0)).current;
+  
+  // React state only for overlay position (throttled, low frequency)
+  const [overlayX, setOverlayX] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isHolding, setIsHolding] = useState(false);
+  
+  // Refs for drag state and data lookup
+  const isDraggingRef = useRef(false);
+  const dragXRef = useRef<number | null>(null);
+  const overlayUpdateFrameRef = useRef<number | null>(null);
+  const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isTouchingRef = useRef(false);
+  const initialTouchPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const hasMovedRef = useRef(false);
+  const initialTouchXRef = useRef<number | null>(null);
+  
+  // Refs for fast data lookup during drag
+  const chartDataRef = useRef<{ value: number }[]>([]);
+  const minValueRef = useRef(0);
+  const maxValueRef = useRef(0);
+  const spacingRef = useRef(0);
+  
+  const HOLD_DELAY_MS = 250;
+  const MOVEMENT_THRESHOLD = 5;
+  
+  // Update refs when data changes
+  useEffect(() => {
+    chartDataRef.current = chartData;
+    minValueRef.current = minValue;
+    maxValueRef.current = maxValue;
+    spacingRef.current = spacing;
+  }, [chartData, minValue, maxValue, spacing]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (holdTimerRef.current) {
+        clearTimeout(holdTimerRef.current);
+      }
+    };
+  }, []);
+  
+  // Find nearest snap point to a given x position
   const findNearestSnapPoint = useCallback((x: number): number | null => {
-    if (getSnapPoints.length === 0 || downsampledData.length === 0) return null;
-    
+    if (snapPoints.length === 0) return null;
     if (timeBounds.maxTime === timeBounds.minTime) return x;
     
     const ratio = x / screenWidth;
     const targetTime = timeBounds.minTime + ratio * (timeBounds.maxTime - timeBounds.minTime);
     
-    // Binary search for nearest snap point (much faster than linear search)
+    // Binary search for nearest snap point
     let left = 0;
-    let right = getSnapPoints.length - 1;
-    let nearestSnap = getSnapPoints[0];
-    let minDiff = Math.abs(getSnapPoints[0].timestamp - targetTime);
+    let right = snapPoints.length - 1;
+    let nearestSnap = snapPoints[0];
+    let minDiff = Math.abs(snapPoints[0].timestamp - targetTime);
     
     while (left <= right) {
       const mid = Math.floor((left + right) / 2);
-      const diff = Math.abs(getSnapPoints[mid].timestamp - targetTime);
+      const diff = Math.abs(snapPoints[mid].timestamp - targetTime);
       
       if (diff < minDiff) {
         minDiff = diff;
-        nearestSnap = getSnapPoints[mid];
+        nearestSnap = snapPoints[mid];
       }
       
-      if (getSnapPoints[mid].timestamp < targetTime) {
+      if (snapPoints[mid].timestamp < targetTime) {
         left = mid + 1;
       } else {
         right = mid - 1;
@@ -459,97 +321,716 @@ function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEn
     // Convert snap point timestamp back to x position
     const snapRatio = (nearestSnap.timestamp - timeBounds.minTime) / (timeBounds.maxTime - timeBounds.minTime);
     return snapRatio * screenWidth;
-  }, [getSnapPoints, timeBounds]);
-
-  // Throttled update function using requestAnimationFrame
+  }, [snapPoints, timeBounds]);
+  
+  // Fast lookup for tracing dot Y position (binary search, no React state)
+  const calculateDotY = useCallback((x: number): number => {
+    const chartData = chartDataRef.current;
+    if (chartData.length === 0) return height / 2;
+    
+    const spacing = spacingRef.current;
+    let left = 0;
+    let right = chartData.length - 1;
+    let closestIndex = 0;
+    let minDistance = Math.abs(x - 0);
+    
+    // Binary search for closest point
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const pointX = mid * spacing;
+      const distance = Math.abs(x - pointX);
+      
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestIndex = mid;
+      }
+      
+      if (pointX < x) {
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+    
+    // Calculate Y using refs (no dependency on React state)
+    const valueRange = maxValueRef.current - minValueRef.current || 1;
+    const padding = valueRange * 0.1;
+    const adjustedMin = minValueRef.current - padding;
+    const adjustedMax = maxValueRef.current + padding;
+    const adjustedRange = adjustedMax - adjustedMin || 1;
+    
+    return height - ((chartData[closestIndex].value - adjustedMin) / adjustedRange) * height;
+  }, [height]);
+  
+  // PERFORMANCE: Update drag position - fully native-driven, zero React re-renders
+  // Animated values update on native thread, fade effect uses Animated.Value listener
   const updateDragX = useCallback((x: number) => {
-    // Snap to nearest snap point
     const snappedX = findNearestSnapPoint(x);
     if (snappedX === null) return;
     
     dragXRef.current = snappedX;
-    const now = Date.now();
     
-    if (now - lastUpdateTimeRef.current >= THROTTLE_MS) {
-      setDragX(snappedX);
-      lastUpdateTimeRef.current = now;
-      
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-    } else if (!animationFrameRef.current) {
-      animationFrameRef.current = requestAnimationFrame(() => {
-        if (dragXRef.current !== null) {
-          setDragX(dragXRef.current);
-          lastUpdateTimeRef.current = Date.now();
-        }
-        animationFrameRef.current = null;
-      });
-    }
-  }, [findNearestSnapPoint]);
-
-  // Store the snap function in a ref so panResponder can access it
+    // Update native-driven animated values immediately (no re-render)
+    // FadeOverlay component listens to dragXAnimated and updates gradient stop position
+    dragXAnimated.setValue(snappedX);
+    const dotY = calculateDotY(snappedX);
+    dotYAnimated.setValue(dotY);
+  }, [findNearestSnapPoint, calculateDotY]);
+  
   const findNearestSnapPointRef = useRef(findNearestSnapPoint);
   findNearestSnapPointRef.current = findNearestSnapPoint;
-
+  
+  // Pre-generate vertical line path (static, moved via transform)
+  const verticalLinePath = useMemo(() => {
+    const startY = height * 0.1;
+    const endY = height * 0.9;
+    const dotRadius = 1.5;
+    const dotSpacing = 6;
+    let pathData = '';
+    
+    for (let y = startY; y <= endY; y += dotSpacing) {
+      pathData += `M 0 ${y} m -${dotRadius},0 a ${dotRadius},${dotRadius} 0 1,0 ${dotRadius * 2},0 a ${dotRadius},${dotRadius} 0 1,0 -${dotRadius * 2},0 `;
+    }
+    
+    return pathData;
+  }, [height]);
+  
+  // PanResponder for drag interaction
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onStartShouldSetPanResponderCapture: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponderCapture: () => true,
+      onStartShouldSetPanResponder: () => isDraggingRef.current,
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponder: () => isDraggingRef.current,
+      onMoveShouldSetPanResponderCapture: () => false,
       onPanResponderGrant: (evt) => {
         const { locationX } = evt.nativeEvent;
-        const constrainedX = Math.max(0, Math.min(screenWidth, locationX));
-        // Snap to nearest snap point on initial touch
+        const constrainedX = Math.max(0, Math.min(width, locationX));
         const snappedX = findNearestSnapPointRef.current(constrainedX);
         const finalX = snappedX !== null ? snappedX : constrainedX;
         dragXRef.current = finalX;
-        setDragX(finalX);
-        setIsDragging(true);
-        isDraggingRef.current = true;
-        lastUpdateTimeRef.current = Date.now();
-        onDragStart?.();
+        
+        dragXAnimated.setValue(finalX);
+        const dotY = calculateDotY(finalX);
+        dotYAnimated.setValue(dotY);
       },
-      onPanResponderMove: (evt, gestureState) => {
+      onPanResponderMove: (evt) => {
+        if (!isDraggingRef.current) return;
         const { locationX } = evt.nativeEvent;
-        // Constrain to chart bounds
-        const constrainedX = Math.max(0, Math.min(screenWidth, locationX));
+        const constrainedX = Math.max(0, Math.min(width, locationX));
         updateDragX(constrainedX);
       },
       onPanResponderRelease: () => {
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-          animationFrameRef.current = null;
+        const wasDragging = isDraggingRef.current;
+        
+        if (holdTimerRef.current) {
+          clearTimeout(holdTimerRef.current);
+          holdTimerRef.current = null;
         }
         dragXRef.current = null;
-        setDragX(null);
         setIsDragging(false);
+        setIsHolding(false);
         isDraggingRef.current = false;
-        onDragEnd?.();
+        
+        if (wasDragging) {
+          onDragEnd?.();
+        }
       },
       onPanResponderTerminate: () => {
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-          animationFrameRef.current = null;
+        if (holdTimerRef.current) {
+          clearTimeout(holdTimerRef.current);
+          holdTimerRef.current = null;
+          if (isHolding) {
+            setIsHolding(false);
+          }
         }
         dragXRef.current = null;
-        setDragX(null);
+        const wasDragging = isDraggingRef.current;
         setIsDragging(false);
+        setIsHolding(false);
         isDraggingRef.current = false;
-        onDragEnd?.();
+        if (wasDragging) {
+          onDragEnd?.();
+        }
       },
-      onPanResponderTerminationRequest: () => {
-        // Never allow parent ScrollView to take over the gesture
-        return false;
-      },
-      onShouldBlockNativeResponder: () => {
-        // Always block native responder to prevent ScrollView from scrolling
-        return true;
-      },
+      onPanResponderTerminationRequest: () => !isDraggingRef.current,
+      onShouldBlockNativeResponder: () => isDraggingRef.current,
     })
   ).current;
+  
+  // Handle touch events for hold timer
+  const handleTouchStart = useCallback((evt: any) => {
+    isTouchingRef.current = true;
+    hasMovedRef.current = false;
+    const { locationX, locationY } = evt.nativeEvent;
+    initialTouchPositionRef.current = { x: locationX, y: locationY };
+    initialTouchXRef.current = locationX;
+    const constrainedX = Math.max(0, Math.min(width, locationX));
+    const snappedX = findNearestSnapPointRef.current(constrainedX);
+    const finalX = snappedX !== null ? snappedX : constrainedX;
+    dragXRef.current = finalX;
+    dragXAnimated.setValue(finalX);
+    const dotY = calculateDotY(finalX);
+    dotYAnimated.setValue(dotY);
+    setOverlayX(finalX);
+    setIsHolding(true);
+    
+    holdTimerRef.current = setTimeout(() => {
+      if (isTouchingRef.current && !isDraggingRef.current && !hasMovedRef.current) {
+        setIsDragging(true);
+        isDraggingRef.current = true;
+        setIsHolding(false);
+        onDragStart?.();
+      } else {
+        setIsHolding(false);
+      }
+    }, HOLD_DELAY_MS);
+  }, [width, findNearestSnapPoint, calculateDotY, onDragStart]);
+  
+  const handleTouchMove = useCallback((evt: any) => {
+    if (isHolding && initialTouchPositionRef.current) {
+      const { locationX, locationY } = evt.nativeEvent;
+      const dx = Math.abs(locationX - initialTouchPositionRef.current.x);
+      const dy = Math.abs(locationY - initialTouchPositionRef.current.y);
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance > MOVEMENT_THRESHOLD) {
+        hasMovedRef.current = true;
+        if (holdTimerRef.current) {
+          clearTimeout(holdTimerRef.current);
+          holdTimerRef.current = null;
+        }
+        setIsHolding(false);
+      }
+    }
+  }, [isHolding]);
+  
+  const handleTouchEnd = useCallback(() => {
+    isTouchingRef.current = false;
+    hasMovedRef.current = false;
+    initialTouchPositionRef.current = null;
+    
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    
+    const wasDragging = isDraggingRef.current;
+    dragXRef.current = null;
+    setOverlayX(null);
+    setIsDragging(false);
+    setIsHolding(false);
+    isDraggingRef.current = false;
+    initialTouchXRef.current = null;
+    
+    if (overlayUpdateFrameRef.current) {
+      cancelAnimationFrame(overlayUpdateFrameRef.current);
+      overlayUpdateFrameRef.current = null;
+    }
+    
+    if (wasDragging) {
+      onDragEnd?.();
+    }
+  }, [onDragEnd]);
+  
+  const handleTouchCancel = useCallback(() => {
+    isTouchingRef.current = false;
+    hasMovedRef.current = false;
+    initialTouchPositionRef.current = null;
+    
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    
+    const wasDragging = isDraggingRef.current;
+    dragXRef.current = null;
+    setOverlayX(null);
+    setIsDragging(false);
+    setIsHolding(false);
+    isDraggingRef.current = false;
+    initialTouchXRef.current = null;
+    
+    if (overlayUpdateFrameRef.current) {
+      cancelAnimationFrame(overlayUpdateFrameRef.current);
+      overlayUpdateFrameRef.current = null;
+    }
+    
+    if (wasDragging) {
+      onDragEnd?.();
+    }
+  }, [onDragEnd]);
+  
+  return {
+    isDragging,
+    isHolding,
+    dragXAnimated,
+    dotYAnimated,
+    verticalLinePath,
+    panResponder,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+    handleTouchCancel,
+  };
+}
+
+// Downsample data for performance - extremely aggressive for large timeframes
+// Coinbase/Stocks apps typically use 50-60 points max for smooth performance
+const downsampleData = (data: { x: string | number; y: number }[], timeRange?: TimeRange): { x: string | number; y: number }[] => {
+  // Use different limits based on time range for optimal performance
+  let maxPoints: number;
+  switch (timeRange) {
+    case '1W':
+      maxPoints = 150; // More points for short timeframes
+      break;
+    case '1M':
+      maxPoints = 100;
+      break;
+    case '3M':
+      maxPoints = 60; // Very aggressive downsampling for large timeframes
+      break;
+    case '1Y':
+    case 'ALL':
+      maxPoints = 50; // Extremely aggressive for largest timeframes (like Coinbase)
+      break;
+    default:
+      maxPoints = 100;
+  }
+
+  if (data.length <= maxPoints) {
+    return data;
+  }
+
+  const result: { x: string | number; y: number }[] = [];
+  const step = data.length / maxPoints;
+  
+  // Always include first point
+  result.push(data[0]);
+  
+  // Sample points evenly - this is fast and preserves overall shape
+  for (let i = 1; i < maxPoints - 1; i++) {
+    const index = Math.round(i * step);
+    if (index < data.length) {
+      result.push(data[index]);
+    }
+  }
+  
+  // Always include last point
+  if (data.length > 1) {
+    result.push(data[data.length - 1]);
+  }
+  
+  return result;
+};
+
+// Convert data to format expected by react-native-gifted-charts
+const convertToChartData = (data: { x: string | number; y: number }[]) => {
+  if (!data || data.length === 0) {
+    console.log('convertToChartData: No data provided');
+    return [];
+  }
+  // react-native-gifted-charts expects data in format: { value: number, label?: string }
+  const converted = data.map((point) => ({
+    value: point.y,
+    // Don't include label if empty - might cause issues
+  }));
+  console.log('convertToChartData: Converted', data.length, 'points, sample:', converted.slice(0, 3));
+  return converted;
+};
+
+// Generate smooth cubic Bezier path (matches react-native-gifted-charts curve algorithm)
+// This creates a path that matches the chart line exactly
+// Exported for testing
+export const generateChartPath = (
+  data: { value: number }[],
+  width: number,
+  height: number,
+  minValue: number,
+  maxValue: number,
+  curved: boolean = true
+): { linePath: string; areaPath: string } => {
+  if (data.length === 0) return { linePath: '', areaPath: '' };
+  
+  const valueRange = maxValue - minValue || 1;
+  const padding = valueRange * 0.1; // 10% padding
+  const adjustedMin = minValue - padding;
+  const adjustedMax = maxValue + padding;
+  const adjustedRange = adjustedMax - adjustedMin || 1;
+  
+  const spacing = data.length > 1 ? width / (data.length - 1) : 0;
+  
+  // Calculate all points first
+  const points: { x: number; y: number }[] = [];
+  for (let i = 0; i < data.length; i++) {
+    const x = i * spacing;
+    const y = height - ((data[i].value - adjustedMin) / adjustedRange) * height;
+    points.push({ x, y });
+  }
+  
+  let linePath = '';
+  let areaPath = '';
+  
+  // Start at first point
+  linePath += `M ${points[0].x} ${points[0].y}`;
+  areaPath += `M ${points[0].x} ${points[0].y}`;
+  
+  if (curved && data.length > 2) {
+    // Use cubic Bezier curves for smooth lines (similar to react-native-gifted-charts)
+    for (let i = 0; i < points.length - 1; i++) {
+      const current = points[i];
+      const next = points[i + 1];
+      
+      if (i === 0) {
+        // First segment: use current point and next point
+        const cp1x = current.x + (next.x - current.x) / 3;
+        const cp1y = current.y;
+        const cp2x = current.x + 2 * (next.x - current.x) / 3;
+        const cp2y = next.y;
+        linePath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
+        areaPath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
+      } else if (i === points.length - 2) {
+        // Last segment: smooth curve to end
+        const prev = points[i - 1];
+        const cp1x = current.x + (next.x - current.x) / 3;
+        const cp1y = current.y;
+        const cp2x = current.x + 2 * (next.x - current.x) / 3;
+        const cp2y = next.y;
+        linePath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
+        areaPath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
+      } else {
+        // Middle segments: smooth curves using neighboring points
+        const prev = points[i - 1];
+        const afterNext = points[i + 2];
+        
+        // Control points for smooth cubic Bezier
+        const cp1x = current.x + (next.x - prev.x) / 6;
+        const cp1y = current.y + (next.y - prev.y) / 6;
+        const cp2x = next.x - (afterNext.x - current.x) / 6;
+        const cp2y = next.y - (afterNext.y - current.y) / 6;
+        
+        linePath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
+        areaPath += ` C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${next.x} ${next.y}`;
+      }
+    }
+  } else {
+    // Straight lines
+    for (let i = 1; i < points.length; i++) {
+      linePath += ` L ${points[i].x} ${points[i].y}`;
+      areaPath += ` L ${points[i].x} ${points[i].y}`;
+    }
+  }
+  
+  // Close area path to bottom to create fill area
+  areaPath += ` L ${width} ${height} L 0 ${height} Z`;
+  
+  return { linePath, areaPath };
+};
+
+// PERFORMANCE: Fade overlay using SVG mask with animated gradient stop
+// This component uses Animated.Value listener to update gradient stop position
+// without triggering React re-renders. The gradient mask creates the fade effect
+// by transitioning from fully opaque (left) to reduced opacity (right).
+const FadeOverlay = React.memo(({
+  width,
+  height,
+  dragXAnimated,
+  fadeMode,
+  fadeIntensity,
+}: {
+  width: number;
+  height: number;
+  dragXAnimated: Animated.Value;
+  fadeMode: 'none' | 'future' | 'past';
+  fadeIntensity: number;
+}) => {
+  const [gradientStopPercent, setGradientStopPercent] = useState<number>(0);
+  const listenerRef = useRef<string | null>(null);
+  
+  useEffect(() => {
+    if (fadeMode === 'none') {
+      setGradientStopPercent(0);
+      return;
+    }
+    
+    // Initialize with current value immediately when component mounts
+    // This ensures the fade is positioned correctly when entering swipe mode
+    // Access _value directly to get current position without waiting for listener
+    const currentValue = (dragXAnimated as any)._value ?? 0;
+    const initialPercent = (currentValue / width) * 100;
+    setGradientStopPercent(Math.max(0, Math.min(100, initialPercent)));
+    
+    // PERFORMANCE: Use Animated.Value listener to update gradient stop position
+    // This runs on the native thread and only updates React state when needed
+    // The listener callback is throttled by the Animated system itself
+    listenerRef.current = dragXAnimated.addListener(({ value }) => {
+      const percent = (value / width) * 100;
+      setGradientStopPercent(Math.max(0, Math.min(100, percent)));
+    });
+    
+    return () => {
+      if (listenerRef.current) {
+        dragXAnimated.removeListener(listenerRef.current);
+      }
+    };
+  }, [dragXAnimated, width, fadeMode]);
+  
+  if (fadeMode === 'none') return null;
+  
+  // Determine gradient direction based on fade mode
+  const isFutureFade = fadeMode === 'future';
+  const gradientX1 = isFutureFade ? '0%' : '100%';
+  const gradientX2 = isFutureFade ? '100%' : '0%';
+  
+  // Calculate gradient stops - transition happens at dragX position
+  const stop1Offset = isFutureFade ? `${gradientStopPercent}%` : `${100 - gradientStopPercent}%`;
+  const stop2Offset = isFutureFade ? `${gradientStopPercent}%` : `${100 - gradientStopPercent}%`;
+  
+  return (
+    <Svg
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width,
+        height,
+        pointerEvents: 'none',
+        zIndex: 5, // Above chart content, below vertical line
+      }}
+      width={width}
+      height={height}
+    >
+      <Defs>
+        {/* PERFORMANCE: Gradient mask - position animated via listener, not React re-renders */}
+        {/* This creates a smooth transition from fully opaque to reduced opacity */}
+        <LinearGradient id="fadeMaskGradient" x1={gradientX1} y1="0%" x2={gradientX2} y2="0%">
+          <Stop offset={stop1Offset} stopColor="white" stopOpacity="0" />
+          <Stop offset={stop2Offset} stopColor="white" stopOpacity="1" />
+        </LinearGradient>
+        <Mask id="fadeMask">
+          <SvgRect width={width} height={height} fill="url(#fadeMaskGradient)" />
+        </Mask>
+      </Defs>
+      {/* PERFORMANCE: Apply mask to a semi-transparent overlay */}
+      {/* The mask controls which parts are visible, creating the fade effect */}
+      {/* Mask gradient: left side transparent (0), right side opaque (1) */}
+      {/* Overlay: background color overlay that fades the right side of the chart */}
+      <SvgRect
+        width={width}
+        height={height}
+        fill={Colors.background}
+        fillOpacity={1 - fadeIntensity} // Overlay opacity: 0.5 means 50% fade when fadeIntensity=0.5
+        mask="url(#fadeMask)"
+      />
+    </Svg>
+  );
+});
+
+// Custom chart overlay with line, gradient fill, and dots pattern
+// Uses the same path for line, fill, and clipPath - ensures perfect matching
+// Memoized to prevent re-renders when only dragX changes
+const ChartOverlay = React.memo(({ 
+  width, 
+  height, 
+  chartData, 
+  minValue, 
+  maxValue, 
+  patternType,
+  dragX,
+  config = {}
+}: { 
+  width: number; 
+  height: number; 
+  chartData: { value: number }[]; 
+  minValue: number; 
+  maxValue: number; 
+  patternType: PatternType;
+  dragX?: number | null; // X position of drag point - everything to the right will be 50% opacity
+  config?: ChartConfig;
+}) => {
+  if (chartData.length === 0) return null;
+  
+  const {
+    lineColor = Colors.chartOrange,
+    lineThickness = 3,
+    gradientStartColor = Colors.chartOrange + '4D',
+    gradientEndColor = Colors.background + '00',
+    gradientStartOpacity = 0.3,
+    gradientEndOpacity = 0,
+    patternColor = Colors.chartOrange,
+    patternOpacity = 0.15,
+    patternSize = 8, // Smaller spacing for more dots
+    curved = true,
+  } = config;
+  
+  // Memoize path generation - paths don't change with dragX
+  const { linePath, areaPath } = useMemo(
+    () => generateChartPath(chartData, width, height, minValue, maxValue, curved),
+    [chartData, width, height, minValue, maxValue, curved]
+  );
+  
+  // Memoize pattern - doesn't change with dragX
+  const dotsPattern = useMemo(() => {
+    if (patternType !== 'dots') return null;
+    return (
+      <Pattern id="dotsPattern" patternUnits="userSpaceOnUse" width={patternSize} height={patternSize}>
+        <Circle cx={patternSize / 2} cy={patternSize / 2} r={patternSize / 6} fill={patternColor} fillOpacity={patternOpacity} />
+      </Pattern>
+    );
+  }, [patternType, patternSize, patternColor, patternOpacity]);
+  
+  // Memoize static gradients and masks - these don't change
+  const staticDefs = useMemo(() => (
+    <>
+      {dotsPattern}
+      {/* Gradient fill matching chart's gradient */}
+      <LinearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+        <Stop offset="0%" stopColor={gradientStartColor} stopOpacity={gradientStartOpacity} />
+        <Stop offset="100%" stopColor={gradientEndColor} stopOpacity={gradientEndOpacity} />
+      </LinearGradient>
+      {/* Gradient mask for dots - simplified to 4 stops for better performance */}
+      <LinearGradient id="dotsFadeMask" x1="0%" y1="0%" x2="0%" y2="100%">
+        <Stop offset="0%" stopColor="white" stopOpacity="1" />
+        <Stop offset="33%" stopColor="white" stopOpacity="0.5" />
+        <Stop offset="66%" stopColor="white" stopOpacity="0.2" />
+        <Stop offset="100%" stopColor="white" stopOpacity="0" />
+      </LinearGradient>
+      {/* Mask that applies the fade gradient to dots */}
+      <Mask id="dotsFadeMaskApplied">
+        <SvgRect width={width} height={height} fill="url(#dotsFadeMask)" />
+      </Mask>
+      {/* ClipPath for dots - uses the same area path as the fill */}
+      <ClipPath id="areaClip">
+        <Path d={areaPath} />
+      </ClipPath>
+    </>
+  ), [dotsPattern, gradientStartColor, gradientEndColor, gradientStartOpacity, gradientEndOpacity, width, height, areaPath]);
+  
+  // Memoize the chart content that doesn't change
+  const chartContent = useMemo(() => (
+    <>
+      {/* Chart line */}
+      <Path 
+        d={linePath} 
+        stroke={lineColor}
+        strokeWidth={lineThickness}
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Gradient fill */}
+      <Path 
+        d={areaPath} 
+        fill="url(#areaGradient)"
+      />
+      {/* Dots pattern - hide during drag for better performance */}
+      {patternType === 'dots' && dragX === null && (
+        <SvgRect
+          width={width}
+          height={height}
+          fill="url(#dotsPattern)"
+          clipPath="url(#areaClip)"
+          mask="url(#dotsFadeMaskApplied)"
+        />
+      )}
+    </>
+  ), [linePath, areaPath, lineColor, lineThickness, patternType, width, height, dragX]);
+  
+  // PERFORMANCE: ChartOverlay renders static chart elements only
+  // Fade effect is handled separately by FadeOverlay component
+  return (
+    <Svg style={StyleSheet.absoluteFill} width={width} height={height}>
+      <Defs>
+        {staticDefs}
+      </Defs>
+      {chartContent}
+    </Svg>
+  );
+}, (prevProps, nextProps) => {
+  // Custom comparison - ChartOverlay is now static (no dragX dependency)
+  // Opacity overlay is handled separately via native Animated.View
+  if (prevProps.width !== nextProps.width) return false;
+  if (prevProps.height !== nextProps.height) return false;
+  if (prevProps.chartData !== nextProps.chartData) return false;
+  if (prevProps.minValue !== nextProps.minValue) return false;
+  if (prevProps.maxValue !== nextProps.maxValue) return false;
+  if (prevProps.patternType !== nextProps.patternType) return false;
+  if (prevProps.config !== nextProps.config) return false;
+  
+  // dragX prop is ignored - overlay is handled separately
+  return true; // Props are equal, skip re-render
+});
+
+function Chart({ 
+  data, 
+  height = 200, 
+  width = screenWidth,
+  patternType = 'dots', 
+  onDragStart, 
+  onDragEnd, 
+  timeRange = '1Y',
+  config = {},
+  testID
+}: ChartProps) {
+  // Merge default config with provided config
+  const defaultConfig: ChartConfig = {
+    lineColor: Colors.chartOrange,
+    lineThickness: 3,
+    gradientStartColor: Colors.chartOrange + '4D',
+    gradientEndColor: Colors.background + '00',
+    gradientStartOpacity: 0.3,
+    gradientEndOpacity: 0,
+    patternColor: Colors.chartOrange,
+    patternOpacity: 0.15,
+    patternSize: 8,
+    curved: true,
+    showDots: true,
+    enableDrag: true,
+    fadeMode: 'future', // Default: fade right side (future data)
+    fadeIntensity: 0.5, // Default: 50% opacity for faded region
+    throttleMs: 16,
+  };
+  
+  const finalConfig = { ...defaultConfig, ...config };
+  
+  // ============================================================================
+  // Use extracted hooks for data processing and drag interaction
+  // ============================================================================
+  const chartDataModule = useChartData(data, timeRange, width);
+  const {
+    chartData,
+    minValue,
+    maxValue,
+    spacing,
+    snapPoints,
+    timeBounds,
+  } = chartDataModule;
+  
+  const dragModule = useChartDrag({
+    width,
+    height,
+    chartData,
+    minValue,
+    maxValue,
+    spacing,
+    snapPoints,
+    timeBounds,
+    onDragStart,
+    onDragEnd,
+  });
+  
+  const {
+    isDragging,
+    dragXAnimated,
+    dotYAnimated,
+    verticalLinePath,
+    panResponder,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+    handleTouchCancel,
+  } = dragModule;
+  
+  const chartContainerRef = useRef<View>(null);
 
   if (!data || data.length === 0) {
     return (
@@ -567,43 +1048,38 @@ function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEn
     );
   }
 
-  // Debug: Log chart rendering
-  console.log('Rendering chart with', chartData.length, 'points, width:', screenWidth + 40, 'height:', height);
-
   return (
     <View 
       style={[styles.container, { height }]}
       ref={chartContainerRef}
       collapsable={false}
-      onTouchStart={(evt) => {
-        // Immediately disable scrolling when touch starts
-        onDragStart?.();
-      }}
-      onTouchEnd={() => {
-        onDragEnd?.();
-      }}
-      onTouchCancel={() => {
-        onDragEnd?.();
-      }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
       {...panResponder.panHandlers}
     >
-      <View style={styles.chartWrapper}>
+      <View style={styles.chartWrapper} testID={testID}>
         {/* Custom chart overlay with gradient fill and dots - uses same path for both */}
-        <View style={styles.chartOverlayContainer} pointerEvents="none">
+        {/* PERFORMANCE: ChartOverlay is now static - no dragX dependency */}
+        <View style={styles.chartOverlayContainer} pointerEvents="none" testID={testID ? `${testID}-overlay` : undefined}>
           <ChartOverlay 
-            width={screenWidth} 
+            width={width} 
             height={height} 
             chartData={chartData} 
             minValue={minValue} 
             maxValue={maxValue} 
             patternType={patternType}
+            dragX={null} // Opacity is handled separately via native overlay
+            config={finalConfig}
           />
         </View>
+        
         {/* LineChart is now hidden - we render everything ourselves for perfect path matching */}
-        <View style={[styles.chartContainer, { height }]} collapsable={false}>
+        <View style={[styles.chartContainer, { height }]} collapsable={false} testID={testID ? `${testID}-container` : undefined}>
           <LineChart
             data={chartData}
-            width={screenWidth}
+            width={width}
             height={height}
             thickness={0} // Hide the line - we render it ourselves
             color="transparent" // Hide the line
@@ -614,7 +1090,7 @@ function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEn
             curved
             animateOnDataChange={false}
             animationDuration={0}
-            spacing={chartData.length > 1 ? screenWidth / (chartData.length - 1) : 0}
+            spacing={chartData.length > 1 ? width / (chartData.length - 1) : 0}
             initialSpacing={0}
             endSpacing={0}
             xAxisThickness={0}
@@ -624,12 +1100,69 @@ function Chart({ data, height = 200, patternType = 'dots', onDragStart, onDragEn
             yAxisLabelWidth={0}
           />
         </View>
+        
+        {/* PERFORMANCE: SVG mask-based fade effect - zero React re-renders during drag */}
+        {/* Uses geometry-based technique: animated gradient stop position in SVG mask */}
+        {/* The mask gradient position is driven by Animated.Value listener, not React state */}
+        {isDragging && (
+          <FadeOverlay
+            width={width}
+            height={height}
+            dragXAnimated={dragXAnimated}
+            fadeMode={finalConfig.fadeMode || 'future'}
+            fadeIntensity={finalConfig.fadeIntensity ?? 0.5}
+          />
+        )}
       </View>
-      {/* Interactive vertical line - appears on drag */}
-      {isDragging && dragX !== null && (
-        <View style={[styles.verticalLineContainer, { height }]} pointerEvents="none" collapsable={false}>
-          <View style={[styles.verticalLine, { left: dragX }]} collapsable={false} />
-        </View>
+      {/* PERFORMANCE: Interactive vertical line and dot - native-driven animations */}
+      {/* Uses Animated.View with transform instead of SVG updates to avoid re-renders */}
+      {isDragging && (
+        <>
+          {/* Vertical line - moved horizontally via transform */}
+          <Animated.View 
+            style={[
+              styles.verticalLineContainer, 
+              { 
+                height,
+                transform: [
+                  { translateX: dragXAnimated }
+                ]
+              }
+            ]} 
+            pointerEvents="none" 
+            collapsable={false}
+          >
+            <Svg style={StyleSheet.absoluteFill} width={width} height={height}>
+              {/* Dotted vertical line - path is static, moved via transform */}
+              <Path
+                d={verticalLinePath}
+                fill={Colors.assetGreyLight}
+              />
+            </Svg>
+          </Animated.View>
+          
+          {/* Tracing dot - separate Animated.View for Y position (react-native-svg doesn't support Animated props) */}
+          {/* zIndex: 15 ensures it appears above the vertical line (zIndex: 10) */}
+          <Animated.View
+            style={[
+              {
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: 8,
+                height: 8,
+                zIndex: 15, // Above vertical line (zIndex: 10)
+                transform: [
+                  { translateX: Animated.subtract(dragXAnimated, 4) }, // Center the dot
+                  { translateY: Animated.subtract(dotYAnimated, 4) }
+                ],
+                pointerEvents: 'none',
+              }
+            ]}
+          >
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.chartOrange }} />
+          </Animated.View>
+        </>
       )}
     </View>
   );
@@ -705,10 +1238,5 @@ const styles = StyleSheet.create({
     pointerEvents: 'none',
     zIndex: 10,
   },
-  verticalLine: {
-    position: 'absolute',
-    width: 1,
-    height: '100%',
-    backgroundColor: Colors.chartOrange,
-  },
+  // verticalLine style removed - now using SVG Line component with dotted pattern and gradient fade
 });
