@@ -335,20 +335,25 @@ export default function HomeScreen() {
       >
         {/* Total Portfolio Section */}
         <View style={[styles.portfolioSection, { paddingTop: Math.max(insets.top, 20) + 20 }]}>
-        <Text style={styles.portfolioLabel}>{formatPortfolioLabel(user?.full_name)}</Text>
         <View style={styles.portfolioValueContainer}>
-          <Text style={styles.currencySymbol}>$</Text>
-          <AnimatedNumbers
-            animateToNumber={Math.round(data.total.current * 100) / 100}
-            fontStyle={styles.portfolioValue}
-            animationDuration={800}
-            includeComma={true}
-          />
+          <View style={styles.currencyContainer}>
+            <Text style={styles.currencySymbol}>$</Text>
+          </View>
+          <View style={styles.valueContainer}>
+            <AnimatedNumbers
+              animateToNumber={Math.round(data.total.current * 100) / 100}
+              fontStyle={styles.portfolioValue}
+              animationDuration={800}
+              includeComma={true}
+            />
+          </View>
         </View>
-        <View style={[styles.deltaBadge, isPositive && styles.deltaBadgePositive]}>
-          <Text style={styles.deltaIcon}>{isPositive ? '↑' : '↓'}</Text>
-          <Text style={styles.deltaText}>
-            {formatCurrency(Math.abs(delta.absolute))}
+        <View style={styles.deltaContainer}>
+          <Text style={[styles.deltaArrow, isPositive ? styles.deltaTextPositive : styles.deltaTextNegative]}>
+            {isPositive ? '↑' : '↓'}
+          </Text>
+          <Text style={[styles.deltaText, isPositive ? styles.deltaTextPositive : styles.deltaTextNegative]}>
+            {formatCurrency(Math.abs(delta.absolute))} ({Math.abs(delta.percent).toFixed(2)}%)
           </Text>
         </View>
       </View>
@@ -486,45 +491,56 @@ const styles = StyleSheet.create({
   portfolioLabel: {
     fontSize: 14,
     color: Colors.textSecondary,
-    marginBottom: 4,
+    marginBottom: 12,
   },
   portfolioValueContainer: {
     flexDirection: 'row',
-    alignItems: 'baseline',
-    marginBottom: 8,
+    alignItems: 'flex-start',
+  },
+  currencyContainer: {
+    marginRight: 0,
   },
   currencySymbol: {
     fontSize: 36,
     fontWeight: 'bold',
     color: Colors.textPrimary,
-    marginRight: 4,
+    letterSpacing: -1,
+    lineHeight: 36,
+  },
+  valueContainer: {
+    flex: 1,
   },
   portfolioValue: {
     fontSize: 36,
     fontWeight: 'bold',
     color: Colors.textPrimary,
+    letterSpacing: -1,
+    lineHeight: 36,
   },
-  deltaBadge: {
+  deltaContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.greenLight,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    alignItems: 'baseline',
+    marginTop: 2,
+    paddingLeft: 3, // Align with dollar sign and first digit
   },
-  deltaBadgePositive: {
-    backgroundColor: Colors.greenLight,
-  },
-  deltaIcon: {
-    fontSize: 14,
-    color: Colors.green,
+  deltaArrow: {
+    fontSize: 18,
+    fontWeight: '600',
+    lineHeight: 16,
+    marginLeft: 0.5, // Shift arrow 0.5px to the right
     marginRight: 4,
+    marginBottom: -1, // Slight adjustment to align with text baseline
   },
   deltaText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '500',
+    letterSpacing: -0.3,
+  },
+  deltaTextPositive: {
     color: Colors.green,
+  },
+  deltaTextNegative: {
+    color: Colors.red,
   },
   timeRangeContainer: {
     flexDirection: 'row',
