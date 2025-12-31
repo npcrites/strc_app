@@ -173,8 +173,8 @@ export default function CustomTabBar({
     
     // Only animate if we're switching to a different tab
     if (currentIndex !== prevIndex) {
-      // Trigger haptic feedback
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      // Trigger haptic feedback - Heavy for tab switching
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
       
       // Animate the previously active tab (scale down and fade)
       if (prevIndex >= 0 && prevIndex < tabAnimations.length) {

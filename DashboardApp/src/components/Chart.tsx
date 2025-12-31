@@ -1,8 +1,13 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { View, Text, StyleSheet, Dimensions, PanResponder, Animated } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, PanResponder, Animated, Easing } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import Svg, { Defs, Pattern, Circle, Rect as SvgRect, LinearGradient, Stop, Mask, ClipPath, Path, Line, G } from 'react-native-svg';
+import * as Haptics from 'expo-haptics';
 import { Colors } from '../constants/colors';
+
+// Create animated SVG components for path animations
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+const AnimatedRect = Animated.createAnimatedComponent(SvgRect);
 
 type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
 type PatternType = 'diagonal' | 'dots' | 'crosshatch' | 'horizontal' | 'vertical' | 'none';
@@ -217,6 +222,267 @@ function useChartData(
 }
 
 // ============================================================================
+// INTERNAL MODULE: useChartTransition()
+// Handles smooth animated transitions between timeframes
+// ============================================================================
+function useChartTransition(
+  chartData: { value: number }[],
+  minValue: number,
+  maxValue: number,
+  width: number,
+  height: number,
+  timeRange: TimeRange,
+  curved: boolean = true
+) {
+  // Track previous values for transition
+  const prevChartDataRef = useRef<{ value: number }[]>(chartData);
+  const prevMinValueRef = useRef<number>(minValue);
+  const prevMaxValueRef = useRef<number>(maxValue);
+  const prevTimeRangeRef = useRef<TimeRange>(timeRange);
+  
+  // Animation value for transition (0 = old data, 1 = new data)
+  const transitionAnim = useRef(new Animated.Value(1)).current; // Start at 1 (new data visible)
+  const isAnimatingRef = useRef(false);
+  
+  // Normalize data arrays to same length for smooth interpolation
+  // Uses linear interpolation between points for smoother transitions (suggestion #2)
+  const normalizeData = useCallback((
+    oldData: { value: number }[],
+    newData: { value: number }[]
+  ): { old: { value: number }[]; new: { value: number }[] } => {
+    if (oldData.length === 0 || newData.length === 0) {
+      return { old: oldData, new: newData };
+    }
+    
+    // Use the longer array's length as target for smoother interpolation
+    const targetLength = Math.max(oldData.length, newData.length);
+    
+    // Helper function to linearly interpolate between data points
+    const interpolateValue = (data: { value: number }[], index: number): number => {
+      if (data.length === 0) return 0;
+      if (data.length === 1) return data[0].value;
+      if (index <= 0) return data[0].value;
+      if (index >= data.length - 1) return data[data.length - 1].value;
+      
+      // Linear interpolation between two points
+      const lowerIndex = Math.floor(index);
+      const upperIndex = Math.ceil(index);
+      const fraction = index - lowerIndex;
+      
+      return data[lowerIndex].value + (data[upperIndex].value - data[lowerIndex].value) * fraction;
+    };
+    
+    // Interpolate old data to target length with linear interpolation
+    const normalizedOld: { value: number }[] = [];
+    for (let i = 0; i < targetLength; i++) {
+      const ratio = oldData.length > 1 ? (i / (targetLength - 1)) * (oldData.length - 1) : 0;
+      const interpolatedValue = interpolateValue(oldData, ratio);
+      normalizedOld.push({ value: interpolatedValue });
+    }
+    
+    // Interpolate new data to target length with linear interpolation
+    const normalizedNew: { value: number }[] = [];
+    for (let i = 0; i < targetLength; i++) {
+      const ratio = newData.length > 1 ? (i / (targetLength - 1)) * (newData.length - 1) : 0;
+      const interpolatedValue = interpolateValue(newData, ratio);
+      normalizedNew.push({ value: interpolatedValue });
+    }
+    
+    return { old: normalizedOld, new: normalizedNew };
+  }, []);
+  
+  // Store old values for interpolation (separate from refs that track current)
+  const oldChartDataForAnimation = useRef<{ value: number }[]>([]);
+  const oldMinValueForAnimation = useRef<number>(0);
+  const oldMaxValueForAnimation = useRef<number>(0);
+  
+  // Check if we need to animate (timeRange changed)
+  useEffect(() => {
+    const timeRangeChanged = prevTimeRangeRef.current !== timeRange;
+    const dataChanged = prevChartDataRef.current !== chartData;
+    
+    // Always process timeRange changes, even if animation is in progress
+    // This ensures animations fire when toggling rapidly between timeframes
+    if (timeRangeChanged || dataChanged) {
+      // Store previous values BEFORE updating refs (for animation interpolation)
+      const oldChartData = [...prevChartDataRef.current]; // Deep copy to preserve old data
+      const oldMinValue = prevMinValueRef.current;
+      const oldMaxValue = prevMaxValueRef.current;
+      
+      // Always animate if timeRange changed (even if data looks similar)
+      // This ensures animations fire when toggling between timeframes repeatedly
+      // For data-only changes (no timeRange change), only animate if data is actually different
+      // Since we now always have 60 points, we need to check if values are different
+      const dataIsDifferent = oldChartData.length > 0 && 
+                             oldChartData.length === chartData.length && // Both have same length (60 points)
+                             JSON.stringify(oldChartData) !== JSON.stringify(chartData); // But different values
+      
+      // Always animate on timeRange change - this ensures it always fires
+      // even when toggling rapidly between the same two timeframes
+      // Also animate on data changes if data is actually different
+      const shouldAnimate = timeRangeChanged || (dataChanged && dataIsDifferent);
+      
+      if (shouldAnimate) {
+        // Store old values for animation interpolation
+        // IMPORTANT: Store the CURRENT displayed state (from animation if animating, or current if not)
+        // This prevents flashing when interrupting an animation mid-way
+        const currentAnimValue = (transitionAnim as any)._value ?? 1;
+        let currentDisplayedData = oldChartData;
+        let currentDisplayedMin = oldMinValue;
+        let currentDisplayedMax = oldMaxValue;
+        
+        // If we're interrupting an animation, use the interpolated state as the "old" state
+        // This prevents flashing when toggling rapidly between timeframes
+        if (isAnimatingRef.current && oldChartDataForAnimation.current.length > 0 && currentAnimValue < 1 && currentAnimValue > 0) {
+          // We're interrupting an animation - use the current interpolated state
+          const normalized = normalizeData(oldChartDataForAnimation.current, prevChartDataRef.current);
+          const normalizedOld = normalized.old;
+          const normalizedNew = normalized.new;
+          
+          // Interpolate to current animation value
+          const interpolatedData: { value: number }[] = [];
+          for (let i = 0; i < normalizedNew.length; i++) {
+            const oldVal = normalizedOld[i]?.value ?? 0;
+            const newVal = normalizedNew[i]?.value ?? 0;
+            interpolatedData.push({ value: oldVal + (newVal - oldVal) * currentAnimValue });
+          }
+          currentDisplayedData = interpolatedData;
+          currentDisplayedMin = oldMinValueForAnimation.current + (prevMinValueRef.current - oldMinValueForAnimation.current) * currentAnimValue;
+          currentDisplayedMax = oldMaxValueForAnimation.current + (prevMaxValueRef.current - oldMaxValueForAnimation.current) * currentAnimValue;
+        } else if (oldChartData.length === 0 && oldChartDataForAnimation.current.length > 0) {
+          // Fallback: if oldChartData is empty but we have animation data, use that
+          // This handles edge cases when toggling rapidly
+          currentDisplayedData = oldChartDataForAnimation.current;
+          currentDisplayedMin = oldMinValueForAnimation.current;
+          currentDisplayedMax = oldMaxValueForAnimation.current;
+        } else if (oldChartData.length === 0 && chartData.length > 0) {
+          // If we have no old data but have new data, use new data as both old and new
+          // This ensures animation still runs (even if it's a no-op visually)
+          currentDisplayedData = chartData;
+          currentDisplayedMin = minValue;
+          currentDisplayedMax = maxValue;
+        }
+        
+        // Store the current displayed state as the "old" state for new animation
+        oldChartDataForAnimation.current = currentDisplayedData;
+        oldMinValueForAnimation.current = currentDisplayedMin;
+        oldMaxValueForAnimation.current = currentDisplayedMax;
+        
+        // Stop any existing animation and start new one immediately (no delay)
+        // Removing requestAnimationFrame delay prevents flashing during rapid toggles
+        transitionAnim.stopAnimation();
+        isAnimatingRef.current = true;
+        
+        // Reset animation to 0 (show current displayed data)
+        transitionAnim.setValue(0);
+        
+        // Animate to 1 (show new data) with smooth easing (no bounce, no overshoot)
+        // Using ease-in-out for predictable animation that never overshoots
+        Animated.timing(transitionAnim, {
+          toValue: 1,
+          duration: 350, // Slightly faster for snappier feel
+          useNativeDriver: false, // Path strings can't use native driver
+          easing: Easing.inOut(Easing.ease), // Smooth ease-in-out - guaranteed no overshoot
+        }).start((finished) => {
+          if (finished) {
+            // Ensure final value is exactly 1 (no floating point errors or overshoot)
+            transitionAnim.setValue(1);
+            isAnimatingRef.current = false;
+            // Don't clear old data immediately - let the path update loop handle the final state
+            // This prevents a hiccup when switching from animated to static paths
+            // The old data will be cleared on the next timeRange change
+          }
+        });
+      } else {
+        // No previous data or no change, just show new data immediately
+        transitionAnim.setValue(1);
+        oldChartDataForAnimation.current = [];
+      }
+      
+      // Update refs to new values AFTER setting up animation
+      prevChartDataRef.current = chartData;
+      prevMinValueRef.current = minValue;
+      prevMaxValueRef.current = maxValue;
+      prevTimeRangeRef.current = timeRange;
+    }
+  }, [chartData, minValue, maxValue, timeRange, transitionAnim]);
+  
+  // Generate interpolated paths with smooth interpolation
+  const getInterpolatedPaths = useCallback((): { linePath: string; areaPath: string } => {
+    const currentValue = Math.min(1, Math.max(0, (transitionAnim as any)._value ?? 1)); // Clamp to [0, 1]
+    
+    // Store current value for external access (used by ChartOverlay to detect completion)
+    (getInterpolatedPaths as any)._lastAnimValue = currentValue;
+    
+    // If animation is complete or no old data stored, use current data
+    if (currentValue >= 0.9999 || oldChartDataForAnimation.current.length === 0) {
+      // Ensure we return the exact final state
+      return generateChartPath(chartData, width, height, minValue, maxValue, curved);
+    }
+    
+    // Use stored old values for interpolation (not the refs which have been updated)
+    const oldChartData = oldChartDataForAnimation.current;
+    const oldMinValue = oldMinValueForAnimation.current;
+    const oldMaxValue = oldMaxValueForAnimation.current;
+    
+    // Normalize old and new data to same length for smooth interpolation
+    const normalized = normalizeData(oldChartData, chartData);
+    const normalizedOld = normalized.old;
+    const normalizedNew = normalized.new;
+    
+    // Use linear interpolation - the easing is already applied by Animated.timing
+    // Double-easing (here + in Animated.timing) can cause overshoot
+    // Linear interpolation ensures smooth, predictable transitions
+    const easedValue = currentValue;
+    
+    // Interpolate min/max values using stored old values with eased interpolation
+    const interpolatedMin = oldMinValue + (minValue - oldMinValue) * easedValue;
+    const interpolatedMax = oldMaxValue + (maxValue - oldMaxValue) * easedValue;
+    
+    // Interpolate data points with eased interpolation for smoother transitions
+    const interpolatedData: { value: number }[] = [];
+    for (let i = 0; i < normalizedNew.length; i++) {
+      const oldValue = normalizedOld[i]?.value ?? (normalizedOld.length > 0 ? normalizedOld[normalizedOld.length - 1]?.value : 0) ?? 0;
+      const newValue = normalizedNew[i]?.value ?? 0;
+      const interpolatedValue = oldValue + (newValue - oldValue) * easedValue;
+      interpolatedData.push({ value: interpolatedValue });
+    }
+    
+    // Generate path from interpolated data
+    return generateChartPath(interpolatedData, width, height, interpolatedMin, interpolatedMax, curved);
+  }, [chartData, minValue, maxValue, width, height, curved, transitionAnim, normalizeData]);
+  
+  // Opacity animation for gradient and dots (keep visible during transitions)
+  // Start at 1 (fully visible) to prevent disappearing during transitions
+  const gradientOpacity = useMemo(() => {
+    return transitionAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1], // Keep fully visible during transitions
+    });
+  }, [transitionAnim]);
+  
+  const dotsOpacity = useMemo(() => {
+    return transitionAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1], // Keep fully visible during transitions
+    });
+  }, [transitionAnim]);
+  
+  return {
+    transitionAnim,
+    getInterpolatedPaths,
+    gradientOpacity,
+    dotsOpacity,
+    isAnimating: isAnimatingRef.current,
+  };
+}
+
+// Helper function to get current animation value (for use in ChartOverlay)
+const getCurrentAnimationValue = (transitionAnim: Animated.Value): number => {
+  return (transitionAnim as any)._value ?? 1;
+};
+
+// ============================================================================
 // INTERNAL MODULE B: useChartDrag()
 // Handles drag interaction: hold logic, pan responder, animated values, lifecycle
 // ============================================================================
@@ -247,15 +513,15 @@ function useChartDrag({
   const dragXAnimated = useRef(new Animated.Value(0)).current;
   const dotYAnimated = useRef(new Animated.Value(0)).current;
   
-  // React state only for overlay position (throttled, low frequency)
-  const [overlayX, setOverlayX] = useState<number | null>(null);
+  // React state for drag lifecycle (not for visual updates)
   const [isDragging, setIsDragging] = useState(false);
   const [isHolding, setIsHolding] = useState(false);
   
   // Refs for drag state and data lookup
   const isDraggingRef = useRef(false);
   const dragXRef = useRef<number | null>(null);
-  const overlayUpdateFrameRef = useRef<number | null>(null);
+  const lastSnappedIndexRef = useRef<number | null>(null); // Track last snapped index for haptic feedback (more reliable than pixel position)
+  const hasInitialHapticRef = useRef(false); // Track if we've fired the initial haptic when entering drag mode
   const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isTouchingRef = useRef(false);
   const initialTouchPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -289,9 +555,10 @@ function useChartDrag({
   }, []);
   
   // Find nearest snap point to a given x position
-  const findNearestSnapPoint = useCallback((x: number): number | null => {
+  // Returns both the x position and the index for haptic tracking
+  const findNearestSnapPoint = useCallback((x: number): { x: number; index: number } | null => {
     if (snapPoints.length === 0) return null;
-    if (timeBounds.maxTime === timeBounds.minTime) return x;
+    if (timeBounds.maxTime === timeBounds.minTime) return { x, index: 0 };
     
     const ratio = x / screenWidth;
     const targetTime = timeBounds.minTime + ratio * (timeBounds.maxTime - timeBounds.minTime);
@@ -299,6 +566,7 @@ function useChartDrag({
     // Binary search for nearest snap point
     let left = 0;
     let right = snapPoints.length - 1;
+    let nearestIndex = 0;
     let nearestSnap = snapPoints[0];
     let minDiff = Math.abs(snapPoints[0].timestamp - targetTime);
     
@@ -309,6 +577,7 @@ function useChartDrag({
       if (diff < minDiff) {
         minDiff = diff;
         nearestSnap = snapPoints[mid];
+        nearestIndex = mid;
       }
       
       if (snapPoints[mid].timestamp < targetTime) {
@@ -320,7 +589,7 @@ function useChartDrag({
     
     // Convert snap point timestamp back to x position
     const snapRatio = (nearestSnap.timestamp - timeBounds.minTime) / (timeBounds.maxTime - timeBounds.minTime);
-    return snapRatio * screenWidth;
+    return { x: snapRatio * screenWidth, index: nearestIndex };
   }, [snapPoints, timeBounds]);
   
   // Fast lookup for tracing dot Y position (binary search, no React state)
@@ -365,8 +634,24 @@ function useChartDrag({
   // PERFORMANCE: Update drag position - fully native-driven, zero React re-renders
   // Animated values update on native thread, fade effect uses Animated.Value listener
   const updateDragX = useCallback((x: number) => {
-    const snappedX = findNearestSnapPoint(x);
-    if (snappedX === null) return;
+    const snapResult = findNearestSnapPoint(x);
+    if (snapResult === null) return;
+    
+    const { x: snappedX, index: snappedIndex } = snapResult;
+    
+    // Haptic feedback when snapping to a new point (tick)
+    // Use selectionAsync() for continuous scrubbing - iOS handles throttling automatically
+    // This is the appropriate haptic type for slider/scrubber interactions on iOS
+    // Fires on every snap point change, including the first one
+    // Check for index change OR if this is the first haptic after entering drag mode
+    const indexChanged = lastSnappedIndexRef.current !== snappedIndex;
+    const isFirstHaptic = !hasInitialHapticRef.current;
+    
+    if (indexChanged || isFirstHaptic) {
+      Haptics.selectionAsync();
+      hasInitialHapticRef.current = true;
+    }
+    lastSnappedIndexRef.current = snappedIndex;
     
     dragXRef.current = snappedX;
     
@@ -405,9 +690,12 @@ function useChartDrag({
       onPanResponderGrant: (evt) => {
         const { locationX } = evt.nativeEvent;
         const constrainedX = Math.max(0, Math.min(width, locationX));
-        const snappedX = findNearestSnapPointRef.current(constrainedX);
-        const finalX = snappedX !== null ? snappedX : constrainedX;
+        const snapResult = findNearestSnapPointRef.current(constrainedX);
+        const finalX = snapResult !== null ? snapResult.x : constrainedX;
         dragXRef.current = finalX;
+        // Don't set lastSnappedIndexRef here - let updateDragX handle it to ensure first haptic fires
+        // Reset the initial haptic flag so we get haptic feedback on the first snap
+        hasInitialHapticRef.current = false;
         
         dragXAnimated.setValue(finalX);
         const dotY = calculateDotY(finalX);
@@ -427,11 +715,15 @@ function useChartDrag({
           holdTimerRef.current = null;
         }
         dragXRef.current = null;
+        lastSnappedIndexRef.current = null; // Reset snap tracking
+        hasInitialHapticRef.current = false; // Reset initial haptic flag
         setIsDragging(false);
         setIsHolding(false);
         isDraggingRef.current = false;
         
         if (wasDragging) {
+          // Haptic feedback when exiting slider mode - Medium intensity
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           onDragEnd?.();
         }
       },
@@ -444,11 +736,15 @@ function useChartDrag({
           }
         }
         dragXRef.current = null;
+        lastSnappedIndexRef.current = null; // Reset snap tracking
+        hasInitialHapticRef.current = false; // Reset initial haptic flag
         const wasDragging = isDraggingRef.current;
         setIsDragging(false);
         setIsHolding(false);
         isDraggingRef.current = false;
         if (wasDragging) {
+          // Haptic feedback when exiting slider mode (terminated) - Medium intensity
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           onDragEnd?.();
         }
       },
@@ -465,13 +761,15 @@ function useChartDrag({
     initialTouchPositionRef.current = { x: locationX, y: locationY };
     initialTouchXRef.current = locationX;
     const constrainedX = Math.max(0, Math.min(width, locationX));
-    const snappedX = findNearestSnapPointRef.current(constrainedX);
-    const finalX = snappedX !== null ? snappedX : constrainedX;
+    const snapResult = findNearestSnapPointRef.current(constrainedX);
+    const finalX = snapResult !== null ? snapResult.x : constrainedX;
     dragXRef.current = finalX;
+    // Don't set lastSnappedIndexRef here - let updateDragX handle it to ensure first haptic fires
+    // Reset the initial haptic flag so we get haptic feedback on the first snap
+    hasInitialHapticRef.current = false;
     dragXAnimated.setValue(finalX);
     const dotY = calculateDotY(finalX);
     dotYAnimated.setValue(dotY);
-    setOverlayX(finalX);
     setIsHolding(true);
     
     holdTimerRef.current = setTimeout(() => {
@@ -479,6 +777,8 @@ function useChartDrag({
         setIsDragging(true);
         isDraggingRef.current = true;
         setIsHolding(false);
+        // Haptic feedback when entering slider mode - Medium intensity
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         onDragStart?.();
       } else {
         setIsHolding(false);
@@ -516,19 +816,16 @@ function useChartDrag({
     
     const wasDragging = isDraggingRef.current;
     dragXRef.current = null;
-    setOverlayX(null);
+        lastSnappedIndexRef.current = null; // Reset snap tracking
     setIsDragging(false);
     setIsHolding(false);
     isDraggingRef.current = false;
     initialTouchXRef.current = null;
     
-    if (overlayUpdateFrameRef.current) {
-      cancelAnimationFrame(overlayUpdateFrameRef.current);
-      overlayUpdateFrameRef.current = null;
-    }
-    
     if (wasDragging) {
-      onDragEnd?.();
+          // Haptic feedback when exiting slider mode - Medium intensity
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          onDragEnd?.();
     }
   }, [onDragEnd]);
   
@@ -544,18 +841,15 @@ function useChartDrag({
     
     const wasDragging = isDraggingRef.current;
     dragXRef.current = null;
-    setOverlayX(null);
+        lastSnappedIndexRef.current = null; // Reset snap tracking
     setIsDragging(false);
     setIsHolding(false);
     isDraggingRef.current = false;
     initialTouchXRef.current = null;
     
-    if (overlayUpdateFrameRef.current) {
-      cancelAnimationFrame(overlayUpdateFrameRef.current);
-      overlayUpdateFrameRef.current = null;
-    }
-    
     if (wasDragging) {
+      // Haptic feedback when exiting slider mode (canceled) - Medium intensity
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       onDragEnd?.();
     }
   }, [onDragEnd]);
@@ -577,38 +871,58 @@ function useChartDrag({
 // Downsample data for performance - extremely aggressive for large timeframes
 // Coinbase/Stocks apps typically use 50-60 points max for smooth performance
 const downsampleData = (data: { x: string | number; y: number }[], timeRange?: TimeRange): { x: string | number; y: number }[] => {
-  // Use different limits based on time range for optimal performance
-  let maxPoints: number;
-  switch (timeRange) {
-    case '1W':
-      maxPoints = 150; // More points for short timeframes
-      break;
-    case '1M':
-      maxPoints = 100;
-      break;
-    case '3M':
-      maxPoints = 60; // Very aggressive downsampling for large timeframes
-      break;
-    case '1Y':
-    case 'ALL':
-      maxPoints = 50; // Extremely aggressive for largest timeframes (like Coinbase)
-      break;
-    default:
-      maxPoints = 100;
-  }
-
-  if (data.length <= maxPoints) {
+  // "Equalizer Hack" (Suggestion #1): Always return exactly TARGET_POINTS for smooth morphing
+  // This ensures all timeframes have the same number of points, allowing smooth path interpolation
+  const TARGET_POINTS = 60; // Constant points for all timeframes - enables smooth transitions
+  
+  if (data.length === 0) {
     return data;
   }
+  
+  if (data.length <= TARGET_POINTS) {
+    // If we have fewer points than target, interpolate to reach exactly TARGET_POINTS
+    if (data.length === TARGET_POINTS) {
+      return data;
+    }
+    
+    // Interpolate to reach exactly TARGET_POINTS
+    const result: { x: string | number; y: number }[] = [];
+    for (let i = 0; i < TARGET_POINTS; i++) {
+      const ratio = data.length > 1 ? (i / (TARGET_POINTS - 1)) * (data.length - 1) : 0;
+      const lowerIndex = Math.floor(ratio);
+      const upperIndex = Math.min(Math.ceil(ratio), data.length - 1);
+      const fraction = ratio - lowerIndex;
+      
+      // Linear interpolation for both x and y
+      const lowerPoint = data[lowerIndex];
+      const upperPoint = data[upperIndex];
+      
+      let interpolatedX: string | number;
+      let interpolatedY: number;
+      
+      if (typeof lowerPoint.x === 'number' && typeof upperPoint.x === 'number') {
+        interpolatedX = lowerPoint.x + (upperPoint.x - lowerPoint.x) * fraction;
+      } else {
+        // For string dates, use the closer point
+        interpolatedX = fraction < 0.5 ? lowerPoint.x : upperPoint.x;
+      }
+      
+      interpolatedY = lowerPoint.y + (upperPoint.y - lowerPoint.y) * fraction;
+      
+      result.push({ x: interpolatedX, y: interpolatedY });
+    }
+    return result;
+  }
 
+  // Downsample to exactly TARGET_POINTS
   const result: { x: string | number; y: number }[] = [];
-  const step = data.length / maxPoints;
+  const step = data.length / TARGET_POINTS;
   
   // Always include first point
   result.push(data[0]);
   
-  // Sample points evenly - this is fast and preserves overall shape
-  for (let i = 1; i < maxPoints - 1; i++) {
+  // Sample points evenly to reach exactly TARGET_POINTS
+  for (let i = 1; i < TARGET_POINTS - 1; i++) {
     const index = Math.round(i * step);
     if (index < data.length) {
       result.push(data[index]);
@@ -618,6 +932,19 @@ const downsampleData = (data: { x: string | number; y: number }[], timeRange?: T
   // Always include last point
   if (data.length > 1) {
     result.push(data[data.length - 1]);
+  }
+  
+  // Ensure we have exactly TARGET_POINTS (in case of rounding errors)
+  if (result.length !== TARGET_POINTS) {
+    // Trim or pad to exact length
+    if (result.length > TARGET_POINTS) {
+      return result.slice(0, TARGET_POINTS);
+    } else {
+      // Pad with last point if needed
+      while (result.length < TARGET_POINTS) {
+        result.push(result[result.length - 1]);
+      }
+    }
   }
   
   return result;
@@ -836,7 +1163,10 @@ const ChartOverlay = React.memo(({
   maxValue, 
   patternType,
   dragX,
-  config = {}
+  config = {},
+  getInterpolatedPaths,
+  gradientOpacity,
+  dotsOpacity,
 }: { 
   width: number; 
   height: number; 
@@ -846,6 +1176,9 @@ const ChartOverlay = React.memo(({
   patternType: PatternType;
   dragX?: number | null; // X position of drag point - everything to the right will be 50% opacity
   config?: ChartConfig;
+  getInterpolatedPaths?: () => { linePath: string; areaPath: string };
+  gradientOpacity?: Animated.AnimatedInterpolation<number>;
+  dotsOpacity?: Animated.AnimatedInterpolation<number>;
 }) => {
   if (chartData.length === 0) return null;
   
@@ -862,11 +1195,66 @@ const ChartOverlay = React.memo(({
     curved = true,
   } = config;
   
-  // Memoize path generation - paths don't change with dragX
-  const { linePath, areaPath } = useMemo(
-    () => generateChartPath(chartData, width, height, minValue, maxValue, curved),
-    [chartData, width, height, minValue, maxValue, curved]
-  );
+  // Use interpolated paths if provided (for transitions), otherwise generate normally
+  const [animatedPaths, setAnimatedPaths] = useState<{ linePath: string; areaPath: string } | null>(null);
+  
+  // Set up optimized path updates during transitions
+  // Use requestAnimationFrame to continuously update paths during animation
+  useEffect(() => {
+    if (getInterpolatedPaths) {
+      // Get initial paths
+      setAnimatedPaths(getInterpolatedPaths());
+      
+      let animationFrame: number | null = null;
+      let isRunning = true;
+      
+      const updatePaths = () => {
+        if (!isRunning) return;
+        
+        // Get paths (this reads the current animation value internally)
+        const paths = getInterpolatedPaths();
+        const currentValue = (getInterpolatedPaths as any)._lastAnimValue ?? 1;
+        
+        // Always update paths to reflect current animation state
+        setAnimatedPaths(paths);
+        
+        // Stop loop when animation completes (value >= 1)
+        // Use a tighter threshold to ensure smooth transition to final state
+        if (currentValue >= 0.999) {
+          isRunning = false;
+          // Set final paths one more time to ensure smooth transition
+          // At this point currentValue is very close to 1, so paths will be final state
+          const finalPaths = getInterpolatedPaths();
+          setAnimatedPaths(finalPaths);
+          return;
+        }
+        
+        // Continue updating during animation (runs at 60fps)
+        animationFrame = requestAnimationFrame(updatePaths);
+      };
+      
+      // Start update loop immediately
+      animationFrame = requestAnimationFrame(updatePaths);
+      
+      return () => {
+        isRunning = false;
+        if (animationFrame !== null) {
+          cancelAnimationFrame(animationFrame);
+        }
+      };
+    } else {
+      // No animation - use static paths
+      setAnimatedPaths(null);
+    }
+  }, [getInterpolatedPaths]);
+  
+  // Memoize path generation - use animated paths if available, otherwise generate normally
+  const { linePath, areaPath } = useMemo(() => {
+    if (animatedPaths) {
+      return animatedPaths;
+    }
+    return generateChartPath(chartData, width, height, minValue, maxValue, curved);
+  }, [animatedPaths, chartData, width, height, minValue, maxValue, curved]);
   
   // Memoize pattern - doesn't change with dragX
   const dotsPattern = useMemo(() => {
@@ -917,23 +1305,42 @@ const ChartOverlay = React.memo(({
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      {/* Gradient fill */}
-      <Path 
-        d={areaPath} 
-        fill="url(#areaGradient)"
-      />
-      {/* Dots pattern - hide during drag for better performance */}
-      {patternType === 'dots' && dragX === null && (
-        <SvgRect
-          width={width}
-          height={height}
-          fill="url(#dotsPattern)"
-          clipPath="url(#areaClip)"
-          mask="url(#dotsFadeMaskApplied)"
+      {/* Gradient fill - with animated opacity during transitions */}
+      {gradientOpacity ? (
+        <AnimatedPath
+          d={areaPath}
+          fill="url(#areaGradient)"
+          opacity={gradientOpacity}
+        />
+      ) : (
+        <Path 
+          d={areaPath} 
+          fill="url(#areaGradient)"
         />
       )}
+      {/* Dots pattern - hide during drag for better performance, with animated opacity during transitions */}
+      {patternType === 'dots' && dragX === null && (
+        dotsOpacity ? (
+          <AnimatedRect
+            width={width}
+            height={height}
+            fill="url(#dotsPattern)"
+            clipPath="url(#areaClip)"
+            mask="url(#dotsFadeMaskApplied)"
+            opacity={dotsOpacity}
+          />
+        ) : (
+          <SvgRect
+            width={width}
+            height={height}
+            fill="url(#dotsPattern)"
+            clipPath="url(#areaClip)"
+            mask="url(#dotsFadeMaskApplied)"
+          />
+        )
+      )}
     </>
-  ), [linePath, areaPath, lineColor, lineThickness, patternType, width, height, dragX]);
+  ), [linePath, areaPath, lineColor, lineThickness, patternType, width, height, dragX, gradientOpacity, dotsOpacity]);
   
   // PERFORMANCE: ChartOverlay renders static chart elements only
   // Fade effect is handled separately by FadeOverlay component
@@ -1005,6 +1412,22 @@ function Chart({
     timeBounds,
   } = chartDataModule;
   
+  // Set up chart transition animations
+  const transitionModule = useChartTransition(
+    chartData,
+    minValue,
+    maxValue,
+    width,
+    height,
+    timeRange,
+    finalConfig.curved ?? true
+  );
+  const {
+    getInterpolatedPaths,
+    gradientOpacity,
+    dotsOpacity,
+  } = transitionModule;
+  
   const dragModule = useChartDrag({
     width,
     height,
@@ -1072,6 +1495,9 @@ function Chart({
             patternType={patternType}
             dragX={null} // Opacity is handled separately via native overlay
             config={finalConfig}
+            getInterpolatedPaths={getInterpolatedPaths}
+            gradientOpacity={gradientOpacity}
+            dotsOpacity={dotsOpacity}
           />
         </View>
         
