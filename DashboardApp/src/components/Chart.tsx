@@ -311,16 +311,40 @@ function useChartTransition(
       
       // Always animate if timeRange changed (even if data looks similar)
       // This ensures animations fire when toggling between timeframes repeatedly
-      // For data-only changes (no timeRange change), only animate if data is actually different
-      // Since we now always have 60 points, we need to check if values are different
+      // For data-only changes (no timeRange change), check if the change is significant
+      // Small price updates during refreshes shouldn't trigger animations
       const dataIsDifferent = oldChartData.length > 0 && 
                              oldChartData.length === chartData.length && // Both have same length (60 points)
                              JSON.stringify(oldChartData) !== JSON.stringify(chartData); // But different values
       
+      // Check if data change is significant (more than just minor price updates)
+      // Calculate the percentage change in the overall range
+      let isSignificantChange = false;
+      if (dataChanged && !timeRangeChanged && oldChartData.length > 0 && chartData.length > 0) {
+        const oldRange = prevMaxValueRef.current - prevMinValueRef.current;
+        const newRange = maxValue - minValue;
+        const rangeChange = Math.abs(newRange - oldRange) / (oldRange || 1);
+        
+        // Also check if individual points have changed significantly
+        let significantPointChanges = 0;
+        const changeThreshold = 0.02; // 2% change threshold
+        for (let i = 0; i < Math.min(oldChartData.length, chartData.length); i++) {
+          const oldVal = oldChartData[i]?.value ?? 0;
+          const newVal = chartData[i]?.value ?? 0;
+          const change = Math.abs(newVal - oldVal) / (oldVal || 1);
+          if (change > changeThreshold) {
+            significantPointChanges++;
+          }
+        }
+        
+        // Consider it significant if range changed by >5% or if >10% of points changed significantly
+        isSignificantChange = rangeChange > 0.05 || (significantPointChanges / chartData.length) > 0.1;
+      }
+      
       // Always animate on timeRange change - this ensures it always fires
       // even when toggling rapidly between the same two timeframes
-      // Also animate on data changes if data is actually different
-      const shouldAnimate = timeRangeChanged || (dataChanged && dataIsDifferent);
+      // For data refreshes, only animate if the change is significant
+      const shouldAnimate = timeRangeChanged || (dataChanged && dataIsDifferent && isSignificantChange);
       
       if (shouldAnimate) {
         // Store old values for animation interpolation
@@ -380,7 +404,7 @@ function useChartTransition(
         // Using ease-in-out for predictable animation that never overshoots
         Animated.timing(transitionAnim, {
           toValue: 1,
-          duration: 350, // Slightly faster for snappier feel
+          duration: 200, // Faster animation for snappier timeframe switching
           useNativeDriver: false, // Path strings can't use native driver
           easing: Easing.inOut(Easing.ease), // Smooth ease-in-out - guaranteed no overshoot
         }).start((finished) => {
@@ -394,9 +418,18 @@ function useChartTransition(
           }
         });
       } else {
-        // No previous data or no change, just show new data immediately
+        // No animation needed - update data smoothly without resetting
+        // Set animation to final state immediately so chart shows new data
         transitionAnim.setValue(1);
+        // Clear old animation data to prevent stale interpolation
         oldChartDataForAnimation.current = [];
+        // IMPORTANT: Still update the refs so next change has correct "old" data
+        // This ensures smooth updates during refreshes without animation
+        prevChartDataRef.current = chartData;
+        prevMinValueRef.current = minValue;
+        prevMaxValueRef.current = maxValue;
+        prevTimeRangeRef.current = timeRange;
+        return; // Early return - no animation needed
       }
       
       // Update refs to new values AFTER setting up animation
@@ -870,7 +903,8 @@ function useChartDrag({
 
 // Downsample data for performance - extremely aggressive for large timeframes
 // Coinbase/Stocks apps typically use 50-60 points max for smooth performance
-const downsampleData = (data: { x: string | number; y: number }[], timeRange?: TimeRange): { x: string | number; y: number }[] => {
+// Export for testing
+export const downsampleData = (data: { x: string | number; y: number }[], timeRange?: TimeRange): { x: string | number; y: number }[] => {
   // "Equalizer Hack" (Suggestion #1): Always return exactly TARGET_POINTS for smooth morphing
   // This ensures all timeframes have the same number of points, allowing smooth path interpolation
   const TARGET_POINTS = 60; // Constant points for all timeframes - enables smooth transitions
@@ -951,9 +985,9 @@ const downsampleData = (data: { x: string | number; y: number }[], timeRange?: T
 };
 
 // Convert data to format expected by react-native-gifted-charts
-const convertToChartData = (data: { x: string | number; y: number }[]) => {
+// Export for testing
+export const convertToChartData = (data: { x: string | number; y: number }[]) => {
   if (!data || data.length === 0) {
-    console.log('convertToChartData: No data provided');
     return [];
   }
   // react-native-gifted-charts expects data in format: { value: number, label?: string }
@@ -961,7 +995,6 @@ const convertToChartData = (data: { x: string | number; y: number }[]) => {
     value: point.y,
     // Don't include label if empty - might cause issues
   }));
-  console.log('convertToChartData: Converted', data.length, 'points, sample:', converted.slice(0, 3));
   return converted;
 };
 

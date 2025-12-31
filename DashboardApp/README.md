@@ -10,7 +10,6 @@ npm start
 ```
 
 ### 2. Open iOS Simulator
-
 **Press `i` in the Expo terminal**
 
 This will:
@@ -49,15 +48,6 @@ DashboardApp/
 │   └── utils/              # Formatters
 ```
 
-## Features
-
-- ✅ TypeScript with full type safety
-- ✅ Bottom tab navigation
-- ✅ Authentication context
-- ✅ API service ready for backend
-- ✅ Victory Native for charts
-- ✅ Formatters for currency, dates, percentages
-
 ## Configuration
 
 ### API URL
@@ -73,6 +63,19 @@ ipconfig getifaddr en0  # macOS
 
 Then update `app.json` → `extra.apiUrlDevice`
 
+## Backend Setup
+
+Make sure the backend is running:
+```bash
+cd ../backend
+source venv/bin/activate
+python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Important**: Must use `--host 0.0.0.0` (not `127.0.0.1`) for mobile devices!
+
+Backend should be at: `http://localhost:8000`
+
 ## Troubleshooting
 
 ### "EMFILE: too many open files" Error
@@ -87,29 +90,69 @@ npm start -- --reset-cache
 npm start -- --reset-cache
 ```
 
-### Can't connect to backend from device
-- Use computer's IP address instead of `localhost` in `app.json`
-- Verify backend is running: `curl http://localhost:8000/health`
-- Check phone and computer are on same WiFi
+### Connection Issues
+
+#### 1. Verify Backend is Running
+```bash
+# From your computer
+curl http://localhost:8000/health
+
+# From your network IP
+curl http://192.168.1.107:8000/health
+```
+
+#### 2. Check Your IP Address
+```bash
+# macOS
+ipconfig getifaddr en0
+
+# Or
+ifconfig | grep "inet " | grep -v 127.0.0.1
+```
+
+Update `DashboardApp/app.json`:
+```json
+"apiUrlDevice": "http://YOUR_IP:8000/api"
+```
+
+#### 3. Network Requirements
+- ✅ Both devices (computer + phone) on **same WiFi network**
+- ✅ Backend running with `--host 0.0.0.0`
+- ✅ Firewall not blocking port 8000
+- ✅ Correct IP address in `app.json`
+
+#### 4. Test from Mobile Device
+1. Open Safari/Chrome on your phone
+2. Navigate to: `http://YOUR_IP:8000/health`
+3. Should see: `{"status":"healthy"}`
+
+If this doesn't work, the phone can't reach your computer - check firewall/network settings.
+
+#### 5. Check Expo Console Logs
+When you try to login, look for:
+- `📱 Physical device detected - Using device API URL: ...`
+- `🌐 API Base URL: ...`
+- `🔗 Full login URL: ...`
+- `✅ Backend health check successful` or `❌ Backend health check failed`
+
+#### 6. Firewall Settings (macOS)
+If phone can't connect, check firewall:
+```bash
+# Check firewall status
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+
+# Allow Python through firewall (if needed)
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /opt/homebrew/Cellar/python@3.14/3.14.2/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python
+```
 
 ### TypeScript errors
 ```bash
 npx tsc --noEmit
 ```
 
-## Next Steps
-
-- ⏳ Implement HomeScreen to fetch dashboard data
-- ⏳ Build charts for portfolio performance
-- ⏳ Implement ActivityScreen with activity feed
-- ⏳ Add authentication flow (if needed)
-
-## Backend Setup
-
-Make sure the backend is running:
-```bash
-cd ../backend
-python3 -m uvicorn app.main:app --reload
-```
-
-Backend should be at: `http://localhost:8000`
+### Still Not Working?
+1. **Check Expo console logs** - Look for the API URL being used
+2. **Verify IP address** - Run `ipconfig getifaddr en0` and update `app.json`
+3. **Test from phone browser** - Try accessing `http://YOUR_IP:8000/health` in Safari
+4. **Restart everything** - Backend, Expo, and your phone's Expo Go app
+5. **Restart Expo with cleared cache**: `npm start -- --clear`

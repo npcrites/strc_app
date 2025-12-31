@@ -127,27 +127,19 @@ class MockDataFactory:
             accounts_config = [
                 {
                     "brokerage_id": brokerages[0].id,
-                    "plaid_account_id": "acc_sample_fidelity_ira",
-                    "name": "Fidelity IRA",
-                    "type": "investment",
-                    "subtype": "ira",
-                    "balance": Decimal("250000.00")
-                },
-                {
-                    "brokerage_id": brokerages[0].id,
                     "plaid_account_id": "acc_sample_fidelity_brokerage",
                     "name": "Fidelity Brokerage Account",
                     "type": "investment",
                     "subtype": "brokerage",
-                    "balance": Decimal("150000.00")
+                    "balance": Decimal("5600.00")  # STRC + SATA + AAPL = 3150 + 1575 + 875 = 5600
                 },
                 {
                     "brokerage_id": brokerages[1].id,
-                    "plaid_account_id": "acc_sample_schwab_401k",
-                    "name": "Schwab 401(k)",
+                    "plaid_account_id": "acc_sample_schwab_brokerage",
+                    "name": "Schwab Brokerage Account",
                     "type": "investment",
-                    "subtype": "401k",
-                    "balance": Decimal("400000.00")
+                    "subtype": "brokerage",
+                    "balance": Decimal("1890.00")  # MSFT + MSTR-A = 1050 + 840 = 1890
                 },
             ]
         
@@ -201,54 +193,45 @@ class MockDataFactory:
                     "account_id": accounts[0].id,
                     "ticker": "STRC",
                     "name": "Starco Preferred Stock",
-                    "shares": Decimal("500.000000"),
-                    "cost_basis": Decimal("50000.00"),
-                    "market_value": Decimal("52500.00"),
+                    "shares": Decimal("30.000000"),
+                    "cost_basis": Decimal("3000.00"),
+                    "market_value": Decimal("3150.00"),
                     "asset_type": "preferred_stock"
                 },
                 {
                     "account_id": accounts[0].id,
                     "ticker": "SATA",
                     "name": "Sata Preferred Stock",
-                    "shares": Decimal("250.000000"),
-                    "cost_basis": Decimal("25000.00"),
-                    "market_value": Decimal("26250.00"),
+                    "shares": Decimal("15.000000"),
+                    "cost_basis": Decimal("1500.00"),
+                    "market_value": Decimal("1575.00"),
                     "asset_type": "preferred_stock"
                 },
                 {
                     "account_id": accounts[0].id,
-                    "ticker": "MSTR-A",
-                    "name": "MicroStrategy Preferred Series A",
-                    "shares": Decimal("125.000000"),
-                    "cost_basis": Decimal("12500.00"),
-                    "market_value": Decimal("13125.00"),
-                    "asset_type": "preferred_stock"
-                },
-                {
-                    "account_id": accounts[1].id,
                     "ticker": "AAPL",
                     "name": "Apple Inc.",
-                    "shares": Decimal("200.000000"),
-                    "cost_basis": Decimal("30000.00"),
-                    "market_value": Decimal("35000.00"),
+                    "shares": Decimal("5.000000"),
+                    "cost_basis": Decimal("750.00"),
+                    "market_value": Decimal("875.00"),
                     "asset_type": "common_stock"
                 },
                 {
                     "account_id": accounts[1].id,
                     "ticker": "MSFT",
                     "name": "Microsoft Corporation",
-                    "shares": Decimal("100.000000"),
-                    "cost_basis": Decimal("30000.00"),
-                    "market_value": Decimal("35000.00"),
+                    "shares": Decimal("3.000000"),
+                    "cost_basis": Decimal("900.00"),
+                    "market_value": Decimal("1050.00"),
                     "asset_type": "common_stock"
                 },
                 {
-                    "account_id": accounts[2].id,
-                    "ticker": "STRC",
-                    "name": "Starco Preferred Stock",
-                    "shares": Decimal("1000.000000"),
-                    "cost_basis": Decimal("100000.00"),
-                    "market_value": Decimal("105000.00"),
+                    "account_id": accounts[1].id,
+                    "ticker": "MSTR-A",
+                    "name": "MicroStrategy Preferred Series A",
+                    "shares": Decimal("8.000000"),
+                    "cost_basis": Decimal("800.00"),
+                    "market_value": Decimal("840.00"),
                     "asset_type": "preferred_stock"
                 },
             ]
@@ -307,66 +290,113 @@ class MockDataFactory:
         today = date.today()
         
         if dividends_config is None:
-            # Generate dividends based on positions
+            # Generate dividends based on positions - small, frequent transactions
             dividends_config = []
             
-            # Find STRC positions
+            # Find STRC positions - monthly dividends, past 6 months
             strc_positions = [p for p in positions if p.ticker == "STRC"]
             for pos in strc_positions:
-                # Past dividend
-                dividends_config.append({
-                    "position_id": pos.id,
-                    "ticker": "STRC",
-                    "amount": Decimal("1250.0000") * (pos.shares / 500),  # Scaled for larger positions
-                    "pay_date": today - timedelta(days=30),
-                    "status": DividendStatus.PAID,
-                    "dividend_per_share": Decimal("2.5000"),
-                    "shares_at_ex_date": pos.shares,
-                    "ex_date": today - timedelta(days=45),
-                    "source": "manual"
-                })
-                # Upcoming dividend
-                dividends_config.append({
-                    "position_id": pos.id,
-                    "ticker": "STRC",
-                    "amount": Decimal("1250.0000") * (pos.shares / 500),
-                    "pay_date": today + timedelta(days=30),
-                    "status": DividendStatus.UPCOMING,
-                    "dividend_per_share": Decimal("2.5000"),
-                    "shares_at_ex_date": pos.shares,
-                    "ex_date": today + timedelta(days=15),
-                    "source": "manual"
-                })
+                dividend_per_share = Decimal("0.25")  # $0.25 per share monthly
+                for month_offset in range(-6, 2):  # Past 6 months + 1 upcoming
+                    pay_date = today + timedelta(days=30 * month_offset)
+                    ex_date = pay_date - timedelta(days=15)
+                    amount = dividend_per_share * pos.shares
+                    
+                    dividends_config.append({
+                        "position_id": pos.id,
+                        "ticker": "STRC",
+                        "amount": amount,
+                        "pay_date": pay_date,
+                        "status": DividendStatus.PAID if month_offset < 0 else DividendStatus.UPCOMING,
+                        "dividend_per_share": dividend_per_share,
+                        "shares_at_ex_date": pos.shares,
+                        "ex_date": ex_date,
+                        "source": "manual"
+                    })
             
-            # Find SATA positions
+            # Find SATA positions - bi-monthly dividends, past 6 months
             sata_positions = [p for p in positions if p.ticker == "SATA"]
             for pos in sata_positions:
-                dividends_config.append({
-                    "position_id": pos.id,
-                    "ticker": "SATA",
-                    "amount": Decimal("625.0000") * (pos.shares / 250),
-                    "pay_date": today - timedelta(days=20),
-                    "status": DividendStatus.PAID,
-                    "dividend_per_share": Decimal("2.5000"),
-                    "shares_at_ex_date": pos.shares,
-                    "ex_date": today - timedelta(days=35),
-                    "source": "manual"
-                })
+                dividend_per_share = Decimal("0.30")  # $0.30 per share bi-monthly
+                for month_offset in range(-6, 2, 2):  # Every 2 months
+                    pay_date = today + timedelta(days=30 * month_offset)
+                    ex_date = pay_date - timedelta(days=15)
+                    amount = dividend_per_share * pos.shares
+                    
+                    dividends_config.append({
+                        "position_id": pos.id,
+                        "ticker": "SATA",
+                        "amount": amount,
+                        "pay_date": pay_date,
+                        "status": DividendStatus.PAID if month_offset < 0 else DividendStatus.UPCOMING,
+                        "dividend_per_share": dividend_per_share,
+                        "shares_at_ex_date": pos.shares,
+                        "ex_date": ex_date,
+                        "source": "manual"
+                    })
             
-            # Find MSTR-A positions
+            # Find MSTR-A positions - quarterly dividends
             mstr_positions = [p for p in positions if p.ticker == "MSTR-A"]
             for pos in mstr_positions:
-                dividends_config.append({
-                    "position_id": pos.id,
-                    "ticker": "MSTR-A",
-                    "amount": Decimal("312.5000") * (pos.shares / 125),
-                    "pay_date": today + timedelta(days=45),
-                    "status": DividendStatus.UPCOMING,
-                    "dividend_per_share": Decimal("2.5000"),
-                    "shares_at_ex_date": pos.shares,
-                    "ex_date": today + timedelta(days=30),
-                    "source": "manual"
-                })
+                dividend_per_share = Decimal("0.50")  # $0.50 per share quarterly
+                for quarter_offset in range(-2, 1):  # Past 2 quarters + 1 upcoming
+                    pay_date = today + timedelta(days=90 * quarter_offset)
+                    ex_date = pay_date - timedelta(days=15)
+                    amount = dividend_per_share * pos.shares
+                    
+                    dividends_config.append({
+                        "position_id": pos.id,
+                        "ticker": "MSTR-A",
+                        "amount": amount,
+                        "pay_date": pay_date,
+                        "status": DividendStatus.PAID if quarter_offset < 0 else DividendStatus.UPCOMING,
+                        "dividend_per_share": dividend_per_share,
+                        "shares_at_ex_date": pos.shares,
+                        "ex_date": ex_date,
+                        "source": "manual"
+                    })
+            
+            # Find AAPL positions - quarterly dividends (common stock)
+            aapl_positions = [p for p in positions if p.ticker == "AAPL"]
+            for pos in aapl_positions:
+                dividend_per_share = Decimal("0.24")  # $0.24 per share quarterly (typical AAPL)
+                for quarter_offset in range(-2, 1):  # Past 2 quarters + 1 upcoming
+                    pay_date = today + timedelta(days=90 * quarter_offset + 15)  # Offset by 15 days
+                    ex_date = pay_date - timedelta(days=10)
+                    amount = dividend_per_share * pos.shares
+                    
+                    dividends_config.append({
+                        "position_id": pos.id,
+                        "ticker": "AAPL",
+                        "amount": amount,
+                        "pay_date": pay_date,
+                        "status": DividendStatus.PAID if quarter_offset < 0 else DividendStatus.UPCOMING,
+                        "dividend_per_share": dividend_per_share,
+                        "shares_at_ex_date": pos.shares,
+                        "ex_date": ex_date,
+                        "source": "manual"
+                    })
+            
+            # Find MSFT positions - quarterly dividends (common stock)
+            msft_positions = [p for p in positions if p.ticker == "MSFT"]
+            for pos in msft_positions:
+                dividend_per_share = Decimal("0.75")  # $0.75 per share quarterly (typical MSFT)
+                for quarter_offset in range(-2, 1):  # Past 2 quarters + 1 upcoming
+                    pay_date = today + timedelta(days=90 * quarter_offset + 30)  # Offset by 30 days
+                    ex_date = pay_date - timedelta(days=10)
+                    amount = dividend_per_share * pos.shares
+                    
+                    dividends_config.append({
+                        "position_id": pos.id,
+                        "ticker": "MSFT",
+                        "amount": amount,
+                        "pay_date": pay_date,
+                        "status": DividendStatus.PAID if quarter_offset < 0 else DividendStatus.UPCOMING,
+                        "dividend_per_share": dividend_per_share,
+                        "shares_at_ex_date": pos.shares,
+                        "ex_date": ex_date,
+                        "source": "manual"
+                    })
         
         dividends = []
         for div_data in dividends_config:
@@ -419,24 +449,40 @@ class MockDataFactory:
                 {
                     "ticker": "STRC",
                     "ex_date": today + timedelta(days=15),
-                    "dividend_amount": Decimal("2.5000"),
+                    "dividend_amount": Decimal("0.25"),
                     "pay_date": today + timedelta(days=30),
                     "source": "manual",
-                    "notes": "Quarterly dividend"
+                    "notes": "Monthly dividend"
                 },
                 {
                     "ticker": "SATA",
-                    "ex_date": today + timedelta(days=60),
-                    "dividend_amount": Decimal("2.5000"),
-                    "pay_date": today + timedelta(days=75),
+                    "ex_date": today + timedelta(days=45),
+                    "dividend_amount": Decimal("0.30"),
+                    "pay_date": today + timedelta(days=60),
+                    "source": "manual",
+                    "notes": "Bi-monthly dividend"
+                },
+                {
+                    "ticker": "MSTR-A",
+                    "ex_date": today + timedelta(days=75),
+                    "dividend_amount": Decimal("0.50"),
+                    "pay_date": today + timedelta(days=90),
                     "source": "manual",
                     "notes": "Quarterly dividend"
                 },
                 {
-                    "ticker": "MSTR-A",
-                    "ex_date": today + timedelta(days=30),
-                    "dividend_amount": Decimal("2.5000"),
-                    "pay_date": today + timedelta(days=45),
+                    "ticker": "AAPL",
+                    "ex_date": today + timedelta(days=5),
+                    "dividend_amount": Decimal("0.24"),
+                    "pay_date": today + timedelta(days=20),
+                    "source": "manual",
+                    "notes": "Quarterly dividend"
+                },
+                {
+                    "ticker": "MSFT",
+                    "ex_date": today + timedelta(days=20),
+                    "dividend_amount": Decimal("0.75"),
+                    "pay_date": today + timedelta(days=35),
                     "source": "manual",
                     "notes": "Quarterly dividend"
                 },

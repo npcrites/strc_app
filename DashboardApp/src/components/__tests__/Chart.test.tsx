@@ -1,6 +1,6 @@
 import React from 'react';
 import { render } from '@testing-library/react-native';
-import { generateChartPath } from '../Chart';
+import { generateChartPath, downsampleData, convertToChartData } from '../Chart';
 import Chart from '../Chart';
 
 // Mock react-native-svg
@@ -14,11 +14,14 @@ jest.mock('react-native-svg', () => {
     Pattern: ({ children, ...props }: any) => React.createElement('Pattern', props, children),
     Circle: (props: any) => React.createElement('Circle', props),
     Rect: (props: any) => React.createElement('Rect', props),
+    SvgRect: (props: any) => React.createElement('Rect', props),
     LinearGradient: ({ children, ...props }: any) => React.createElement('LinearGradient', props, children),
     Stop: (props: any) => React.createElement('Stop', props),
     Mask: ({ children, ...props }: any) => React.createElement('Mask', props, children),
     ClipPath: ({ children, ...props }: any) => React.createElement('ClipPath', props, children),
     Path: (props: any) => React.createElement('Path', props),
+    Line: (props: any) => React.createElement('Line', props),
+    G: ({ children, ...props }: any) => React.createElement('G', props, children),
   };
 });
 
@@ -341,6 +344,340 @@ describe('Chart Component', () => {
       const onDragEnd = jest.fn();
       const { getByTestID } = render(
         <Chart data={mockData} onDragEnd={onDragEnd} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+  });
+
+  describe('Data Downsampling', () => {
+    it('should return empty array for empty data', () => {
+      const result = downsampleData([], '1W');
+      expect(result).toEqual([]);
+    });
+
+    it('should return same data if length is exactly 60', () => {
+      const data = Array.from({ length: 60 }, (_, i) => ({ x: i, y: i * 10 }));
+      const result = downsampleData(data, '1W');
+      expect(result.length).toBe(60);
+      expect(result[0]).toEqual(data[0]);
+      expect(result[59]).toEqual(data[59]);
+    });
+
+    it('should interpolate to 60 points when data is smaller', () => {
+      const data = [
+        { x: '2024-01-01', y: 100 },
+        { x: '2024-01-02', y: 150 },
+        { x: '2024-01-03', y: 120 },
+      ];
+      const result = downsampleData(data, '1W');
+      expect(result.length).toBe(60);
+      expect(result[0].y).toBeCloseTo(100, 1);
+      expect(result[59].y).toBeCloseTo(120, 1);
+    });
+
+    it('should downsample to 60 points when data is larger', () => {
+      const data = Array.from({ length: 200 }, (_, i) => ({ x: i, y: i * 10 }));
+      const result = downsampleData(data, '1M');
+      expect(result.length).toBe(60);
+      expect(result[0]).toEqual(data[0]);
+      expect(result[59]).toEqual(data[199]);
+    });
+
+    it('should handle single data point', () => {
+      const data = [{ x: '2024-01-01', y: 100 }];
+      const result = downsampleData(data, '1W');
+      expect(result.length).toBe(60);
+      // All points should be the same value
+      expect(result.every(p => p.y === 100)).toBe(true);
+    });
+
+    it('should preserve first and last points when downsampling', () => {
+      const data = Array.from({ length: 100 }, (_, i) => ({ x: i, y: i * 10 }));
+      const result = downsampleData(data, '1M');
+      expect(result[0]).toEqual(data[0]);
+      expect(result[result.length - 1]).toEqual(data[data.length - 1]);
+    });
+
+    it('should handle different time ranges', () => {
+      const data = Array.from({ length: 100 }, (_, i) => ({ x: i, y: i * 10 }));
+      const timeRanges: Array<'1W' | '1M' | '3M' | '1Y' | 'ALL'> = ['1W', '1M', '3M', '1Y', 'ALL'];
+      timeRanges.forEach(range => {
+        const result = downsampleData(data, range);
+        expect(result.length).toBe(60);
+      });
+    });
+  });
+
+  describe('Data Conversion', () => {
+    it('should convert empty array to empty array', () => {
+      const result = convertToChartData([]);
+      expect(result).toEqual([]);
+    });
+
+    it('should convert data with x and y to value-only format', () => {
+      const data = [
+        { x: '2024-01-01', y: 100 },
+        { x: '2024-01-02', y: 150 },
+      ];
+      const result = convertToChartData(data);
+      expect(result).toEqual([
+        { value: 100 },
+        { value: 150 },
+      ]);
+    });
+
+    it('should handle numeric x values', () => {
+      const data = [
+        { x: 1000, y: 100 },
+        { x: 2000, y: 150 },
+      ];
+      const result = convertToChartData(data);
+      expect(result).toEqual([
+        { value: 100 },
+        { value: 150 },
+      ]);
+    });
+
+    it('should handle zero values', () => {
+      const data = [
+        { x: '2024-01-01', y: 0 },
+        { x: '2024-01-02', y: 0 },
+      ];
+      const result = convertToChartData(data);
+      expect(result).toEqual([
+        { value: 0 },
+        { value: 0 },
+      ]);
+    });
+
+    it('should handle negative values', () => {
+      const data = [
+        { x: '2024-01-01', y: -50 },
+        { x: '2024-01-02', y: -100 },
+      ];
+      const result = convertToChartData(data);
+      expect(result).toEqual([
+        { value: -50 },
+        { value: -100 },
+      ]);
+    });
+  });
+
+  describe('Data State Transitions', () => {
+    it('should handle transition from empty to populated data', () => {
+      const { rerender, getByTestID } = render(
+        <Chart data={[]} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+
+      rerender(<Chart data={mockData} testID="chart" />);
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle transition from populated to empty data', () => {
+      const { rerender, getByTestID } = render(
+        <Chart data={mockData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+
+      rerender(<Chart data={[]} testID="chart" />);
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle data refresh with same timeframe', () => {
+      const initialData = [
+        { x: '2024-01-01', y: 100 },
+        { x: '2024-01-02', y: 150 },
+      ];
+      const refreshedData = [
+        { x: '2024-01-01', y: 105 }, // Slight price update
+        { x: '2024-01-02', y: 155 },
+      ];
+
+      const { rerender, getByTestID } = render(
+        <Chart data={initialData} timeRange="1W" testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+
+      rerender(<Chart data={refreshedData} timeRange="1W" testID="chart" />);
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle timeframe change with same data', () => {
+      const { rerender, getByTestID } = render(
+        <Chart data={mockData} timeRange="1W" testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+
+      rerender(<Chart data={mockData} timeRange="1M" testID="chart" />);
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle rapid timeframe toggling', () => {
+      const { rerender, getByTestID } = render(
+        <Chart data={mockData} timeRange="1W" testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+
+      // Toggle between two timeframes
+      rerender(<Chart data={mockData} timeRange="1M" testID="chart" />);
+      expect(getByTestID('chart')).toBeTruthy();
+
+      rerender(<Chart data={mockData} timeRange="1W" testID="chart" />);
+      expect(getByTestID('chart')).toBeTruthy();
+
+      rerender(<Chart data={mockData} timeRange="1M" testID="chart" />);
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+  });
+
+  describe('Large Dataset Handling', () => {
+    it('should handle very large datasets (1000+ points)', () => {
+      const largeData = Array.from({ length: 1000 }, (_, i) => ({
+        x: `2024-01-${String(i + 1).padStart(2, '0')}`,
+        y: Math.sin(i / 10) * 100 + 100,
+      }));
+      const { getByTestID } = render(
+        <Chart data={largeData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle datasets with 10,000+ points', () => {
+      const veryLargeData = Array.from({ length: 10000 }, (_, i) => ({
+        x: i,
+        y: Math.random() * 1000,
+      }));
+      const { getByTestID } = render(
+        <Chart data={veryLargeData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should maintain performance with large datasets across timeframes', () => {
+      const largeData = Array.from({ length: 5000 }, (_, i) => ({
+        x: i,
+        y: Math.random() * 1000,
+      }));
+      const timeRanges: Array<'1W' | '1M' | '3M' | '1Y' | 'ALL'> = ['1W', '1M', '3M', '1Y', 'ALL'];
+      
+      timeRanges.forEach(range => {
+        const { getByTestID } = render(
+          <Chart data={largeData} timeRange={range} testID="chart" />
+        );
+        expect(getByTestID('chart')).toBeTruthy();
+      });
+    });
+  });
+
+  describe('Data Quality Edge Cases', () => {
+    it('should handle data with duplicate x values', () => {
+      const duplicateData = [
+        { x: '2024-01-01', y: 100 },
+        { x: '2024-01-01', y: 150 },
+        { x: '2024-01-02', y: 120 },
+      ];
+      const { getByTestID } = render(
+        <Chart data={duplicateData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle data with non-sequential x values', () => {
+      const nonSequentialData = [
+        { x: '2024-01-01', y: 100 },
+        { x: '2024-01-05', y: 150 },
+        { x: '2024-01-10', y: 120 },
+        { x: '2024-01-15', y: 180 },
+      ];
+      const { getByTestID } = render(
+        <Chart data={nonSequentialData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle data with extreme value ranges', () => {
+      const extremeData = [
+        { x: '2024-01-01', y: 0.0001 },
+        { x: '2024-01-02', y: 1000000 },
+        { x: '2024-01-03', y: 500000 },
+      ];
+      const { getByTestID } = render(
+        <Chart data={extremeData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle data with NaN values gracefully', () => {
+      const nanData = [
+        { x: '2024-01-01', y: 100 },
+        { x: '2024-01-02', y: NaN as any },
+        { x: '2024-01-03', y: 120 },
+      ];
+      // Should not crash, though behavior may vary
+      const { getByTestID } = render(
+        <Chart data={nanData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle data with Infinity values gracefully', () => {
+      const infinityData = [
+        { x: '2024-01-01', y: 100 },
+        { x: '2024-01-02', y: Infinity as any },
+        { x: '2024-01-03', y: 120 },
+      ];
+      const { getByTestID } = render(
+        <Chart data={infinityData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+  });
+
+  describe('Real-world Data Scenarios', () => {
+    it('should handle stock price data (typical range)', () => {
+      const stockData = Array.from({ length: 100 }, (_, i) => ({
+        x: new Date(2024, 0, i + 1).toISOString(),
+        y: 100 + Math.random() * 20 - 10, // Price between 90-110
+      }));
+      const { getByTestID } = render(
+        <Chart data={stockData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle portfolio value data (large numbers)', () => {
+      const portfolioData = Array.from({ length: 365 }, (_, i) => ({
+        x: new Date(2024, 0, i + 1).toISOString(),
+        y: 100000 + Math.random() * 10000, // Portfolio value ~100k
+      }));
+      const { getByTestID } = render(
+        <Chart data={portfolioData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle percentage data (0-100 range)', () => {
+      const percentageData = Array.from({ length: 50 }, (_, i) => ({
+        x: i,
+        y: Math.random() * 100, // 0-100%
+      }));
+      const { getByTestID } = render(
+        <Chart data={percentageData} testID="chart" />
+      );
+      expect(getByTestID('chart')).toBeTruthy();
+    });
+
+    it('should handle data with gaps (missing days)', () => {
+      const dataWithGaps = [
+        { x: '2024-01-01', y: 100 },
+        { x: '2024-01-02', y: 150 },
+        // Gap: missing 2024-01-03
+        { x: '2024-01-04', y: 120 },
+        { x: '2024-01-05', y: 180 },
+      ];
+      const { getByTestID } = render(
+        <Chart data={dataWithGaps} testID="chart" />
       );
       expect(getByTestID('chart')).toBeTruthy();
     });

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # JWT
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours (1440 minutes) - good for mobile apps
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 129600  # 90 days (129,600 minutes) - good for mobile apps
     
     # Plaid
     PLAID_CLIENT_ID: str = ""
