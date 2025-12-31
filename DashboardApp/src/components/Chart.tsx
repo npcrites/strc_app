@@ -1,16 +1,99 @@
 import React from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
-import { VictoryLine, VictoryChart, VictoryAxis, VictoryArea } from 'victory-native';
+import { VictoryLine, VictoryChart, VictoryAxis, VictoryArea, VictoryContainer } from 'victory-native';
+import { Defs, LinearGradient, Stop, Pattern, Rect as SvgRect, Circle } from 'react-native-svg';
 import { Colors } from '../constants/colors';
 
 interface ChartProps {
   data: { x: string | number; y: number }[];
   height?: number;
+  patternType?: 'diagonal' | 'dots' | 'crosshatch' | 'horizontal' | 'vertical' | 'none';
 }
 
 const screenWidth = Dimensions.get('window').width;
 
-export default function Chart({ data, height = 200 }: ChartProps) {
+// Pattern type definitions
+const createPattern = (type: string) => {
+  switch (type) {
+    case 'diagonal':
+      return (
+        <Pattern
+          id="areaPattern"
+          patternUnits="userSpaceOnUse"
+          width="8"
+          height="8"
+          patternTransform="rotate(45)"
+        >
+          <SvgRect width="4" height="8" fill={Colors.chartOrange} fillOpacity="0.08" />
+        </Pattern>
+      );
+    case 'dots':
+      return (
+        <Pattern
+          id="areaPattern"
+          patternUnits="userSpaceOnUse"
+          width="6"
+          height="6"
+        >
+          <Circle cx="3" cy="3" r="1" fill={Colors.chartOrange} fillOpacity="0.1" />
+        </Pattern>
+      );
+    case 'crosshatch':
+      return (
+        <Pattern
+          id="areaPattern"
+          patternUnits="userSpaceOnUse"
+          width="8"
+          height="8"
+        >
+          <SvgRect width="8" height="1" fill={Colors.chartOrange} fillOpacity="0.08" />
+          <SvgRect x="0" y="0" width="1" height="8" fill={Colors.chartOrange} fillOpacity="0.08" />
+        </Pattern>
+      );
+    case 'horizontal':
+      return (
+        <Pattern
+          id="areaPattern"
+          patternUnits="userSpaceOnUse"
+          width="8"
+          height="4"
+        >
+          <SvgRect width="8" height="1" fill={Colors.chartOrange} fillOpacity="0.1" />
+        </Pattern>
+      );
+    case 'vertical':
+      return (
+        <Pattern
+          id="areaPattern"
+          patternUnits="userSpaceOnUse"
+          width="4"
+          height="8"
+        >
+          <SvgRect width="1" height="8" fill={Colors.chartOrange} fillOpacity="0.1" />
+        </Pattern>
+      );
+    default:
+      return null;
+  }
+};
+
+// Custom container that includes SVG gradient and pattern definitions
+const GradientContainer = ({ patternType = 'diagonal', ...props }: any) => {
+  return (
+    <VictoryContainer {...props}>
+      <Defs>
+        <LinearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+          <Stop offset="0%" stopColor={Colors.chartOrange} stopOpacity="0.3" />
+          <Stop offset="100%" stopColor={Colors.chartOrangeGradient} stopOpacity="0" />
+        </LinearGradient>
+        {patternType !== 'none' && createPattern(patternType)}
+      </Defs>
+      {props.children}
+    </VictoryContainer>
+  );
+};
+
+export default function Chart({ data, height = 200, patternType = 'dots' }: ChartProps) {
   if (!data || data.length === 0) {
     return (
       <View style={[styles.container, { height }]}>
@@ -19,41 +102,35 @@ export default function Chart({ data, height = 200 }: ChartProps) {
     );
   }
 
-  // Format x-axis labels (dates)
-  const formatXAxis = (tick: string | number) => {
-    if (typeof tick === 'string') {
-      const date = new Date(tick);
-      if (isNaN(date.getTime())) return String(tick);
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    }
-    return String(tick);
-  };
-
-  // Format y-axis labels (currency)
-  const formatYAxis = (tick: number) => {
-    if (tick >= 1000) {
-      return `$${(tick / 1000).toFixed(0)}k`;
-    }
-    return `$${tick.toFixed(0)}`;
-  };
-
   return (
     <View style={[styles.container, { height }]}>
       <VictoryChart
-        width={screenWidth - 40}
+        width={screenWidth}
         height={height}
-        padding={{ left: 50, right: 20, top: 20, bottom: 40 }}
+        padding={{ left: 0, right: 0, top: 20, bottom: 0 }}
+        containerComponent={<GradientContainer patternType={patternType} />}
       >
-        {/* Gradient area under the line */}
+        {/* Gradient area - smooth fade from top to bottom */}
         <VictoryArea
           data={data}
           style={{
             data: {
-              fill: Colors.chartOrangeGradient,
-              fillOpacity: 0.3,
+              fill: 'url(#areaGradient)',
             },
           }}
         />
+        {/* Pattern overlay */}
+        {patternType !== 'none' && (
+          <VictoryArea
+            data={data}
+            style={{
+              data: {
+                fill: 'url(#areaPattern)',
+                fillOpacity: 1,
+              },
+            }}
+          />
+        )}
         {/* Orange line */}
         <VictoryLine
           data={data}
@@ -67,14 +144,14 @@ export default function Chart({ data, height = 200 }: ChartProps) {
         {/* X-axis */}
         <VictoryAxis
           style={{
-            axis: { stroke: Colors.textTertiary },
+            axis: { stroke: 'transparent' },
             tickLabels: {
-              fill: Colors.textSecondary,
-              fontSize: 12,
+              fill: 'transparent',
+              fontSize: 0,
             },
             grid: { stroke: 'transparent' },
           }}
-          tickFormat={formatXAxis}
+          tickFormat={() => ''}
         />
         {/* Y-axis */}
         <VictoryAxis
@@ -82,12 +159,12 @@ export default function Chart({ data, height = 200 }: ChartProps) {
           style={{
             axis: { stroke: 'transparent' },
             tickLabels: {
-              fill: Colors.textTertiary,
-              fontSize: 12,
+              fill: 'transparent',
+              fontSize: 0,
             },
-            grid: { stroke: Colors.backgroundGrey },
+            grid: { stroke: 'transparent' },
           }}
-          tickFormat={formatYAxis}
+          tickFormat={() => ''}
         />
       </VictoryChart>
     </View>
@@ -97,7 +174,7 @@ export default function Chart({ data, height = 200 }: ChartProps) {
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    alignItems: 'center',
+    alignItems: 'stretch',
     justifyContent: 'center',
   },
   emptyText: {

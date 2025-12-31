@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
 import { Colors } from '../constants/colors';
 
 interface Tab {
@@ -53,6 +54,21 @@ export default function CustomTabBar({
   const latestMeasuredWidth = useRef<number>(200); // Track most recent measured width
   const skipNextEffect = useRef(false); // Skip useEffect after drag completes
   const currentX = useRef(MARGIN); // Track current X position directly (fixes stopAnimation bug)
+  
+  // Animation values for tab toggle - initialize for all routes
+  const tabAnimations = useRef(
+    state.routes.map(() => ({
+      scale: new Animated.Value(1),
+      opacity: new Animated.Value(1),
+    }))
+  ).current;
+  const previousTabIndex = useRef(state.index);
+  
+  // Animation for sliding grey pill background
+  const pillTranslateX = useRef(new Animated.Value(0)).current;
+  const pillWidth = useRef(new Animated.Value(0)).current;
+  const tabPositions = useRef<number[]>([]); // Store x positions of each tab
+  const tabWidths = useRef<number[]>([]); // Store widths of each tab
 
   // Load saved position on mount
   useEffect(() => {
@@ -150,8 +166,105 @@ export default function CustomTabBar({
     }
   }, []);
 
+  // Animate tab toggle when switching between tabs
+  useEffect(() => {
+    const currentIndex = state.index;
+    const prevIndex = previousTabIndex.current;
+    
+    // Only animate if we're switching to a different tab
+    if (currentIndex !== prevIndex) {
+      // Trigger haptic feedback
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      
+      // Animate the previously active tab (scale down and fade)
+      if (prevIndex >= 0 && prevIndex < tabAnimations.length) {
+        Animated.parallel([
+          Animated.spring(tabAnimations[prevIndex].scale, {
+            toValue: 0.9,
+            useNativeDriver: true,
+            speed: 15,
+            bounciness: 0,
+          }),
+          Animated.timing(tabAnimations[prevIndex].opacity, {
+            toValue: 0.6,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }
+      
+      // Animate the newly active tab (scale up and brighten)
+      if (currentIndex >= 0 && currentIndex < tabAnimations.length) {
+        Animated.parallel([
+          Animated.spring(tabAnimations[currentIndex].scale, {
+            toValue: 1,
+            useNativeDriver: true,
+            speed: 15,
+            bounciness: 8,
+          }),
+          Animated.timing(tabAnimations[currentIndex].opacity, {
+            toValue: 1,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }
+      
+      // Animate the sliding grey pill to the new tab position
+      if (
+        currentIndex >= 0 &&
+        currentIndex < tabPositions.current.length &&
+        currentIndex < tabWidths.current.length &&
+        tabPositions.current[currentIndex] !== undefined &&
+        tabWidths.current[currentIndex] !== undefined &&
+        !isNaN(tabPositions.current[currentIndex]) &&
+        !isNaN(tabWidths.current[currentIndex])
+      ) {
+        const targetX = tabPositions.current[currentIndex];
+        const targetWidth = tabWidths.current[currentIndex];
+        
+        // Animate position and width - must use same native driver setting
+        // Since width can't use native driver, we disable it for both
+        Animated.parallel([
+          Animated.spring(pillTranslateX, {
+            toValue: targetX,
+            useNativeDriver: false, // Must match width animation
+            speed: 15,
+            bounciness: 8,
+          }),
+          Animated.spring(pillWidth, {
+            toValue: targetWidth,
+            useNativeDriver: false, // width animation cannot use native driver
+            speed: 15,
+            bounciness: 8,
+          }),
+        ]).start();
+      }
+      
+      previousTabIndex.current = currentIndex;
+    }
+  }, [state.index, tabAnimations, pillTranslateX]);
+
   const handlePress = useCallback(
-    (route: any, isFocused: boolean) => {
+    (route: any, isFocused: boolean, index: number) => {
+      // Quick press animation feedback
+      if (!isFocused && index < tabAnimations.length) {
+        Animated.sequence([
+          Animated.spring(tabAnimations[index].scale, {
+            toValue: 0.95,
+            useNativeDriver: true,
+            speed: 20,
+            bounciness: 10,
+          }),
+          Animated.spring(tabAnimations[index].scale, {
+            toValue: 1,
+            useNativeDriver: true,
+            speed: 20,
+            bounciness: 10,
+          }),
+        ]).start();
+      }
+      
       const event = navigation.emit({
         type: 'tabPress',
         target: route.key,
@@ -162,7 +275,7 @@ export default function CustomTabBar({
         navigation.navigate(route.name);
       }
     },
-    [navigation]
+    [navigation, tabAnimations]
   );
 
   const handleLongPress = useCallback(
@@ -413,6 +526,16 @@ export default function CustomTabBar({
     >
       <View style={styles.dragHandle} pointerEvents="box-none" />
       <View style={styles.tabBar} pointerEvents="box-none">
+        {/* Sliding grey pill background */}
+        <Animated.View
+          style={[
+            styles.slidingPill,
+            {
+              transform: [{ translateX: pillTranslateX }],
+              width: pillWidth,
+            },
+          ]}
+        />
         {state.routes.map((route: any, index: number) => {
           const { options } = descriptors[route.key];
           const isFocused = state.index === index;
@@ -425,20 +548,37 @@ export default function CustomTabBar({
               accessibilityState={isFocused ? { selected: true } : {}}
               accessibilityLabel={options.tabBarAccessibilityLabel}
               testID={options.tabBarTestID}
-              onPress={() => handlePress(route, isFocused)}
+              onPress={() => handlePress(route, isFocused, index)}
               onLongPress={() => handleLongPress(route)}
               style={styles.tabButton}
-              activeOpacity={0.7}
-              delayPressIn={100}
-              delayPressOut={100}
+              activeOpacity={1}
+              delayPressIn={0}
+              delayPressOut={0}
               hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
+              onLayout={(event) => {
+                const { x, width } = event.nativeEvent.layout;
+                if (index >= 0 && !isNaN(x) && !isNaN(width) && width > 0) {
+                  tabPositions.current[index] = x;
+                  tabWidths.current[index] = width;
+                  
+                  // Initialize pill position and width when the focused tab is measured
+                  if (isFocused) {
+                    pillWidth.setValue(width);
+                    pillTranslateX.setValue(x);
+                  }
+                }
+              }}
             >
-              <View
+              <Animated.View
                 style={[
                   styles.tabButtonInner,
-                  isFocused
-                    ? styles.tabButtonActive
-                    : styles.tabButtonInactive,
+                  // Remove background color - the sliding pill provides it
+                  index < tabAnimations.length && {
+                    transform: [
+                      { scale: tabAnimations[index].scale },
+                    ],
+                    opacity: tabAnimations[index].opacity,
+                  },
                 ]}
               >
                 <Text
@@ -461,7 +601,7 @@ export default function CustomTabBar({
                 >
                   {tab?.label || route.name}
                 </Text>
-              </View>
+              </Animated.View>
             </TouchableOpacity>
           );
         })}
@@ -513,12 +653,14 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     minWidth: 90,
     gap: 6,
+    backgroundColor: 'transparent', // Transparent - sliding pill provides background
   },
-  tabButtonActive: {
+  slidingPill: {
+    position: 'absolute',
     backgroundColor: Colors.backgroundGrey,
-  },
-  tabButtonInactive: {
-    backgroundColor: Colors.backgroundWhite,
+    borderRadius: 20,
+    height: '100%',
+    zIndex: 0,
   },
   tabIcon: {
     fontSize: 20,

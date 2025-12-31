@@ -22,8 +22,25 @@ import { refreshRateLimiter } from '../utils/rateLimiter';
 type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
 type ContentFilter = 'Total' | 'Assets' | 'Dividends';
 
+// Helper function to format portfolio label with proper apostrophe handling
+const formatPortfolioLabel = (fullName?: string): string => {
+  if (!fullName || fullName.trim() === '') {
+    return "Portfolio";
+  }
+  
+  // Extract first name (everything before the first space)
+  const firstName = fullName.trim().split(' ')[0];
+  
+  // Handle apostrophe: names ending in 's' get just apostrophe, others get apostrophe + s
+  const possessive = firstName.toLowerCase().endsWith('s') 
+    ? `${firstName}'` 
+    : `${firstName}'s`;
+  
+  return `${possessive} Portfolio`;
+};
+
 export default function HomeScreen() {
-  const { token, loading: authLoading } = useAuth();
+  const { token, loading: authLoading, user } = useAuth();
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -318,7 +335,7 @@ export default function HomeScreen() {
       >
         {/* Total Portfolio Section */}
         <View style={[styles.portfolioSection, { paddingTop: Math.max(insets.top, 20) + 20 }]}>
-        <Text style={styles.portfolioLabel}>Total Portfolio</Text>
+        <Text style={styles.portfolioLabel}>{formatPortfolioLabel(user?.full_name)}</Text>
         <View style={styles.portfolioValueContainer}>
           <Text style={styles.currencySymbol}>$</Text>
           <AnimatedNumbers
@@ -535,7 +552,7 @@ const styles = StyleSheet.create({
   },
   chartContainer: {
     marginBottom: 20,
-    paddingHorizontal: 20,
+    paddingHorizontal: 0,
   },
   filterContainer: {
     flexDirection: 'row',
