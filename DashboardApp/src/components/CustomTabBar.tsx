@@ -52,6 +52,7 @@ export default function CustomTabBar({
   const isDragging = useRef(false);
   const latestMeasuredWidth = useRef<number>(200); // Track most recent measured width
   const skipNextEffect = useRef(false); // Skip useEffect after drag completes
+  const currentX = useRef(MARGIN); // Track current X position directly (fixes stopAnimation bug)
 
   // Load saved position on mount
   useEffect(() => {
@@ -128,8 +129,8 @@ export default function CustomTabBar({
     Animated.spring(translateX, {
       toValue: targetX,
       useNativeDriver: true,
-      tension: 100, // Increased for snappier animation
-      friction: 15, // Reduced for faster animation
+      speed: 12, // Animation speed
+      bounciness: 8, // Bounce effect (0 = no bounce, higher = more bounce)
     }).start(() => {
       isAnimating.current = false;
       // Ensure final position is exactly correct
@@ -179,50 +180,88 @@ export default function CustomTabBar({
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: (evt, gestureState) => {
-          return Math.abs(gestureState.dx) > 10;
+          // Higher threshold - require more deliberate drag
+          const shouldCapture = Math.abs(gestureState.dx) > 15 || Math.abs(gestureState.dy) > 15;
+          console.log('🤔 onStartShouldSetPanResponder:', {
+            dx: gestureState.dx,
+            dy: gestureState.dy,
+            shouldCapture,
+          });
+          return shouldCapture;
         },
         onMoveShouldSetPanResponder: (evt, gestureState) => {
-          return (
-            Math.abs(gestureState.dx) > 10 &&
-            Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
-          );
-        },
-        onPanResponderGrant: () => {
-          translateX.stopAnimation((value) => {
-            dragStartX.current = value;
+          // Higher threshold and prioritize horizontal movement
+          const shouldCapture =
+            (Math.abs(gestureState.dx) > 15 || Math.abs(gestureState.dy) > 15) &&
+            Math.abs(gestureState.dx) >= Math.abs(gestureState.dy) * 1.5;
+          console.log('🤔 onMoveShouldSetPanResponder:', {
+            dx: gestureState.dx,
+            dy: gestureState.dy,
+            shouldCapture,
+            'dx >= dy * 1.5': Math.abs(gestureState.dx) >= Math.abs(gestureState.dy) * 1.5,
           });
+          return shouldCapture;
+        },
+        onPanResponderGrant: (evt, gestureState) => {
+          // Use tracked currentX instead of stopAnimation (which can be unreliable)
+          dragStartX.current = currentX.current;
           isDragging.current = true;
           isAnimating.current = false;
-          console.log('🔄 Drag started from x:', dragStartX.current);
+          console.log('🔄 Drag started from x:', dragStartX.current, {
+            initialDx: gestureState.dx,
+            initialDy: gestureState.dy,
+            trackedCurrentX: currentX.current,
+          });
         },
         onPanResponderMove: (evt, gestureState) => {
-          if (isDragging.current) {
-            const newX = dragStartX.current + gestureState.dx;
-            const minX = 0;
-            const maxX = screenWidth - containerWidth;
-            const constrainedX = Math.max(minX, Math.min(maxX, newX));
-            translateX.setValue(constrainedX);
+          if (!isDragging.current) {
+            console.log('⚠️ onPanResponderMove called but isDragging is false!');
+            return;
           }
+          
+          // Use latest measured width for constraint calculation
+          const widthToUse = latestMeasuredWidth.current || containerWidth;
+          const newX = dragStartX.current + gestureState.dx;
+          const minX = 0; // Allow dragging all the way to left edge
+          const maxX = screenWidth - widthToUse; // Allow dragging all the way to right edge
+          const constrainedX = Math.max(minX, Math.min(maxX, newX));
+          
+          // Update tracked position
+          currentX.current = constrainedX;
+          
+          console.log('👆 Moving:', {
+            'gestureState.dx': gestureState.dx,
+            dragStartX: dragStartX.current,
+            newX,
+            constrainedX,
+            maxX,
+            widthToUse,
+            screenWidth,
+            'tracked currentX': currentX.current,
+          });
+          
+          translateX.setValue(constrainedX);
         },
         onPanResponderRelease: () => {
-          // Get current position and stop any animation
-          let currentX = 0;
-          translateX.stopAnimation((value) => {
-            currentX = value;
-          });
+          // Use tracked currentX instead of stopAnimation (which can return wrong value)
+          const releaseX = currentX.current;
+          
+          // Stop any animation but don't rely on its return value
+          translateX.stopAnimation();
           
           // Use the most recently measured width (always up-to-date)
           const widthToUse = latestMeasuredWidth.current || containerWidth;
           
           // Calculate which side to snap to
           const screenCenterX = screenWidth / 2;
-          const tabBarCenterX = currentX + widthToUse / 2;
+          const tabBarCenterX = releaseX + widthToUse / 2;
           
           console.log('🎯 Release decision:', {
             tabBarCenterX,
             screenCenterX,
             'tabBarCenterX < screenCenterX': tabBarCenterX < screenCenterX,
-            currentX,
+            releaseX,
+            trackedCurrentX: currentX.current,
             containerWidth,
             latestMeasuredWidth: latestMeasuredWidth.current,
             widthToUse,
@@ -282,8 +321,8 @@ export default function CustomTabBar({
           Animated.spring(translateX, {
             toValue: targetX,
             useNativeDriver: true,
-            tension: 100,
-            friction: 15,
+            speed: 12, // Animation speed
+            bounciness: 8, // Bounce effect (0 = no bounce, higher = more bounce)
           }).start(() => {
             isAnimating.current = false;
             
@@ -343,6 +382,7 @@ export default function CustomTabBar({
       // Set initial animated value based on positionIndex
       const initialX = positionIndex === 0 ? MARGIN : screenWidth - width - MARGIN;
       translateX.setValue(initialX);
+      currentX.current = initialX; // Track initial position
       console.log('📍 Set initial position:', positionIndex === 0 ? 'LEFT' : 'RIGHT', 'x:', initialX);
       return;
     }
@@ -371,8 +411,8 @@ export default function CustomTabBar({
       onLayout={handleLayout}
       {...panResponder.panHandlers}
     >
-      <View style={styles.dragHandle} />
-      <View style={styles.tabBar}>
+      <View style={styles.dragHandle} pointerEvents="box-none" />
+      <View style={styles.tabBar} pointerEvents="box-none">
         {state.routes.map((route: any, index: number) => {
           const { options } = descriptors[route.key];
           const isFocused = state.index === index;
@@ -389,6 +429,9 @@ export default function CustomTabBar({
               onLongPress={() => handleLongPress(route)}
               style={styles.tabButton}
               activeOpacity={0.7}
+              delayPressIn={100}
+              delayPressOut={100}
+              hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
             >
               <View
                 style={[
@@ -445,11 +488,11 @@ const styles = StyleSheet.create({
   },
   dragHandle: {
     position: 'absolute',
-    top: -20,
-    left: -20,
-    right: -20,
-    bottom: -20,
-    zIndex: 0,
+    top: -30,
+    left: -30,
+    right: -30,
+    bottom: -30,
+    zIndex: 1,
     backgroundColor: 'transparent',
   },
   tabBar: {
