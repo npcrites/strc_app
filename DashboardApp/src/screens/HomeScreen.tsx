@@ -430,7 +430,7 @@ export default function HomeScreen() {
       <ScrollView 
         style={styles.container} 
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) + 80 }}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 20) + 80 }]}
         bounces={true}
         alwaysBounceVertical={true}
         scrollEnabled={scrollEnabled}
@@ -493,14 +493,17 @@ export default function HomeScreen() {
       </View>
 
       {/* Performance Chart */}
-      <View style={styles.chartContainer}>
-        <Chart 
-          data={chartData} 
-          height={200} 
-          onDragStart={() => setScrollEnabled(false)}
-          onDragEnd={() => setScrollEnabled(true)}
-        />
-        {/* Content Filters */}
+      <View style={styles.chartWrapper}>
+        <View style={styles.chartContainer}>
+          <Chart 
+            data={chartData} 
+            height={200} 
+            timeRange={timeRange}
+            onDragStart={() => setScrollEnabled(false)}
+            onDragEnd={() => setScrollEnabled(true)}
+          />
+        </View>
+        {/* Content Filters - outside chart container to maintain proper alignment */}
         <View style={styles.filterContainer}>
           {(['Total', 'Assets', 'Dividends'] as ContentFilter[]).map((filter) => (
             <TouchableOpacity
@@ -580,6 +583,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+    overflow: 'visible', // Allow chart to extend beyond ScrollView bounds
+  },
+  scrollContent: {
+    overflow: 'visible', // Allow content to extend beyond bounds
   },
   loadingContainer: {
     flex: 1,
@@ -681,13 +688,19 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     fontWeight: '600',
   },
-  chartContainer: {
+  chartWrapper: {
     marginBottom: 0,
+  },
+  chartContainer: {
     paddingHorizontal: 0,
+    marginLeft: 0, // No negative margin needed - chart extends naturally
+    marginRight: 0,
+    width: Dimensions.get('window').width, // Full screen width
+    overflow: 'visible', // Allow chart to extend beyond container
   },
   filterContainer: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
+    paddingHorizontal: 20, // Match assetSection padding
     marginTop: 8,
     marginBottom: 24,
     gap: 8,
