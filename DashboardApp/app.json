@@ -31,7 +31,7 @@
     },
     "extra": {
       "apiUrl": "http://localhost:8000/api",
-      "apiUrlDevice": "http://192.168.1.107:8000/api"
+      "apiUrlDevice": "http://192.168.1.155:8000/api"
     }
   }
 }

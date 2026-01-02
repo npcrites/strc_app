@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # Import app models and base
 from app.db.base import Base
-from app.models import User, Brokerage, Account, Position, Dividend, ExDate
+from app.models import User, Position, Dividend, ExDate
 from app.core.config import settings
 
 # this is the Alembic Config object, which provides

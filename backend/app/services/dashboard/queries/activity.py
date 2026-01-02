@@ -43,8 +43,7 @@ def get_trades(
     """
     Return all trades (BUY/SELL) for the user in the given date range.
     
-    Note: Currently, trades are inferred from position changes or would come from
-    Plaid investment transactions. For MVP, this returns empty list.
+    Note: Currently, trades are inferred from position changes.
     Future: When Transaction model exists, map DB rows to ActivityItem.
     
     Args:
@@ -58,7 +57,6 @@ def get_trades(
     """
     # TODO: Implement when Transaction model exists
     # For now, return empty list - trades will be added when transaction tracking is implemented
-    # This could also pull from Plaid investment_transactions if needed
     return []
 
 

@@ -14,7 +14,6 @@ class Position(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=True, index=True)
     ticker = Column(String, nullable=False, index=True)  # e.g., "STRC", "SATA", "MSTR-A"
     name = Column(String, nullable=True)  # Full security name
     shares = Column(Numeric(15, 6), nullable=False)  # Number of shares
@@ -27,7 +26,6 @@ class Position(Base):
     
     # Relationships
     user = relationship("User", back_populates="positions")
-    account = relationship("Account", back_populates="positions")
     dividends = relationship(
         "Dividend", 
         back_populates="position", 
@@ -38,7 +36,6 @@ class Position(Base):
     __table_args__ = (
         Index('idx_positions_user_id', 'user_id'),
         Index('idx_positions_ticker', 'ticker'),
-        Index('idx_positions_account_id', 'account_id'),
         Index('idx_positions_snapshot_timestamp', 'snapshot_timestamp'),
     )
     

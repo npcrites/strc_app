@@ -14,7 +14,7 @@ sys.path.insert(0, str(backend_dir))
 
 from app.db.session import SessionLocal, engine
 from app.db.base import Base
-from app.models import User, Brokerage, Account, Position, Dividend, DividendStatus
+from app.models import User, Position, Dividend, DividendStatus
 from app.core.security import get_password_hash
 from app.services.dashboard.dashboard_service import DashboardService
 from app.services.dashboard.models.time_range import TimeRange, TimeGranularity
@@ -61,32 +61,11 @@ def test_user(db_session):
 @pytest.fixture(scope="function")
 def test_positions(db_session, test_user):
     """Create test positions"""
-    # Create brokerage and account
-    brokerage = Brokerage(
-        user_id=test_user.id,
-        name="Test Brokerage"
-    )
-    db_session.add(brokerage)
-    db_session.commit()
-    db_session.refresh(brokerage)
-    
-    account = Account(
-        user_id=test_user.id,
-        brokerage_id=brokerage.id,
-        name="Test Account",
-        type="investment",
-        balance=Decimal("50000.00")
-    )
-    db_session.add(account)
-    db_session.commit()
-    db_session.refresh(account)
-    
     # Create positions with different timestamps
     now = datetime.now()
     positions = [
         Position(
             user_id=test_user.id,
-            account_id=account.id,
             ticker="STRC",
             name="Starco Preferred",
             shares=Decimal("100.000000"),
@@ -97,7 +76,6 @@ def test_positions(db_session, test_user):
         ),
         Position(
             user_id=test_user.id,
-            account_id=account.id,
             ticker="STRC",
             name="Starco Preferred",
             shares=Decimal("100.000000"),
@@ -108,7 +86,6 @@ def test_positions(db_session, test_user):
         ),
         Position(
             user_id=test_user.id,
-            account_id=account.id,
             ticker="AAPL",
             name="Apple Inc.",
             shares=Decimal("10.000000"),

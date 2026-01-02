@@ -9,7 +9,7 @@ const API_BASE_URL = __DEV__
   : 'https://api.strctracker.com/api';
 
 const API_BASE_URL_DEVICE = __DEV__
-  ? (Constants.expoConfig?.extra?.apiUrlDevice || 'http://192.168.1.107:8000/api')
+  ? (Constants.expoConfig?.extra?.apiUrlDevice || 'http://192.168.1.155:8000/api')
   : 'https://api.strctracker.com/api';
 
 export interface ApiError {
