@@ -37,8 +37,8 @@ class PerformanceMetrics(BaseModel):
 
 class AllocationItem(BaseModel):
     """Asset allocation item"""
-    asset_type: str = Field(..., description="Asset type (e.g., 'STOCK', 'CASH', 'preferred_stock')")
-    value: float = Field(..., description="Total value of this asset type")
+    ticker: str = Field(..., description="Ticker symbol (e.g., 'STRC', 'SATA', 'AAPL')")
+    value: float = Field(..., description="Total value of this asset")
     percent: float = Field(..., description="Percentage of total portfolio")
 
 
@@ -58,6 +58,7 @@ class ActivityItem(BaseModel):
 class DashboardSnapshot(BaseModel):
     """Complete dashboard snapshot response"""
     as_of: datetime = Field(..., description="Snapshot timestamp")
+    granularity: str = Field(..., description="Data granularity: 'daily', 'weekly', or 'monthly'")
     total: TotalMetrics = Field(..., description="Total portfolio metrics")
     performance: PerformanceMetrics = Field(..., description="Performance metrics")
     allocation: List[AllocationItem] = Field(..., description="Asset allocation breakdown")

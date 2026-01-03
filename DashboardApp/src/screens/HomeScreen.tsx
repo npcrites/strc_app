@@ -9,8 +9,11 @@ import {
   StatusBar,
   RefreshControl,
   Dimensions,
+  Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AnimatedNumbers from 'react-native-animated-numbers';
 import { useAuth } from '../context/AuthContext';
 import { dashboardApi } from '../services/dashboard';
@@ -20,6 +23,12 @@ import { Colors } from '../constants/colors';
 import Chart from '../components/Chart';
 import { refreshRateLimiter } from '../utils/rateLimiter';
 import { filterDashboardByTimeRange } from '../utils/dashboardFilter';
+
+type RootStackParamList = {
+  AssetDetail: { ticker: string };
+};
+
+type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'AssetDetail'>;
 
 type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
 type ContentFilter = 'Total' | 'Assets' | 'Dividends';
@@ -41,8 +50,20 @@ const formatPortfolioLabel = (fullName?: string): string => {
   return `${possessive} Portfolio`;
 };
 
+// Helper function to format portfolio value with conditional decimal places
+const formatPortfolioValue = (value: number): number => {
+  // For values under 10k, keep full precision (2 decimal places)
+  // For values 10k and above, round to nearest integer
+  if (value < 10000) {
+    // Preserve 2 decimal places using proper rounding
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+  return Math.round(value); // Round to integer for 10k+
+};
+
 export default function HomeScreen() {
-  const { token, loading: authLoading, user } = useAuth();
+  const { token, loading: authLoading, user, logout } = useAuth();
+  const navigation = useNavigation<HomeScreenNavigationProp>();
   const insets = useSafeAreaInsets();
   const screenWidth = Dimensions.get('window').width;
   const [loading, setLoading] = useState(true);
@@ -59,6 +80,14 @@ export default function HomeScreen() {
   const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isRefreshingRef = useRef<boolean>(false);
   const lastRefreshTimeRef = useRef<number>(0);
+  const previousPortfolioValueRef = useRef<number | null>(null);
+  const previousPortfolioDollarsDigitsRef = useRef<number[] | null>(null);
+  const previousPortfolioCentsTensRef = useRef<number | null>(null);
+  const previousPortfolioCentsOnesRef = useRef<number | null>(null);
+  const valueDirectionRef = useRef<'increasing' | 'decreasing' | null>(null);
+  const colorOpacityAnim = useRef(new Animated.Value(0)).current;
+  const fadeOutTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [portfolioValueColor, setPortfolioValueColor] = useState<string>(Colors.textPrimary);
   const MIN_REFRESH_INTERVAL_MS = 30 * 1000; // Minimum 30 seconds between any refreshes
 
   // Calculate responsive scale factor (base: 375px iPhone standard)
@@ -101,11 +130,11 @@ export default function HomeScreen() {
     // Load all data once (fetch with 'ALL' time range)
     loadAllData();
     
-    // Set up automatic refresh every 60 seconds to update prices & portfolio totals
+    // Set up automatic refresh every 30 seconds to update prices & portfolio totals
     refreshIntervalRef.current = setInterval(() => {
-      console.log('⏰ Auto-refreshing dashboard data (60 second interval)');
+      console.log('⏰ Auto-refreshing dashboard data (30 second interval)');
       loadAllData(true); // Pass true to indicate this is an auto-refresh
-    }, 60 * 1000); // 60 seconds
+    }, 30 * 1000); // 30 seconds
     
     // Cleanup interval on unmount or when dependencies change
     return () => {
@@ -125,6 +154,56 @@ export default function HomeScreen() {
     }
   }, [timeRange]);
 
+  // Update portfolio value color animation when value changes
+  useEffect(() => {
+    if (!data) return;
+    
+    const currentValue = Math.round(data.total.current);
+    const previousValue = previousPortfolioValueRef.current;
+    
+    if (previousValue !== null && currentValue !== previousValue && portfolioLeftmostChangePosition !== -1) {
+      if (portfolioIsIncrease) {
+        valueDirectionRef.current = 'increasing';
+        setPortfolioValueColor(Colors.greenDark);
+      } else {
+        valueDirectionRef.current = 'decreasing';
+        setPortfolioValueColor(Colors.redDark);
+      }
+      
+      previousPortfolioValueRef.current = currentValue;
+      
+      // Fade in the color (start at 1 for full color)
+      colorOpacityAnim.setValue(1);
+      
+      // Clear any existing fade-out timeout
+      if (fadeOutTimeoutRef.current) {
+        clearTimeout(fadeOutTimeoutRef.current);
+      }
+      
+      // Fade out after animation completes (800ms animation + 200ms delay)
+      fadeOutTimeoutRef.current = setTimeout(() => {
+        Animated.timing(colorOpacityAnim, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: false,
+        }).start(() => {
+          // Reset direction and color after fade completes
+          valueDirectionRef.current = null;
+          setPortfolioValueColor(Colors.textPrimary);
+        });
+      }, 1000); // 800ms animation + 200ms delay
+    } else if (previousValue === null) {
+      // Initialize on first render
+      previousPortfolioValueRef.current = currentValue;
+    }
+    
+    return () => {
+      if (fadeOutTimeoutRef.current) {
+        clearTimeout(fadeOutTimeoutRef.current);
+      }
+    };
+  }, [data?.total.current, colorOpacityAnim, portfolioLeftmostChangePosition, portfolioIsIncrease]);
+
   // Load all data once (Coinbase-style: fetch all, filter client-side)
   const loadAllData = async (isAutoRefresh = false) => {
     if (!token) {
@@ -139,13 +218,16 @@ export default function HomeScreen() {
       return;
     }
     
-    // Stop-gap 2: Enforce minimum time between refreshes
+    // Stop-gap 2: Enforce minimum time between refreshes (ONLY for manual requests)
+    // Auto-refreshes bypass this check to allow regular 30-second updates
     const now = Date.now();
-    const timeSinceLastRefresh = now - lastRefreshTimeRef.current;
-    if (timeSinceLastRefresh < MIN_REFRESH_INTERVAL_MS) {
-      const waitTime = Math.ceil((MIN_REFRESH_INTERVAL_MS - timeSinceLastRefresh) / 1000);
-      console.log(`⏸️ Rate limit: Please wait ${waitTime} second${waitTime !== 1 ? 's' : ''} before refreshing again`);
-      return;
+    if (!isAutoRefresh) {
+      const timeSinceLastRefresh = now - lastRefreshTimeRef.current;
+      if (timeSinceLastRefresh < MIN_REFRESH_INTERVAL_MS) {
+        const waitTime = Math.ceil((MIN_REFRESH_INTERVAL_MS - timeSinceLastRefresh) / 1000);
+        console.log(`⏸️ Rate limit: Please wait ${waitTime} second${waitTime !== 1 ? 's' : ''} before refreshing again`);
+        return;
+      }
     }
     
     // Cancel any in-flight request
@@ -277,11 +359,22 @@ export default function HomeScreen() {
       ? data.performance.position_series || []
       : data.performance.cash_series || [];
     
-    return series.map((point) => ({
+    const mapped = series.map((point) => ({
       x: point.timestamp,
       y: point.value,
     }));
-  }, [data, contentFilter]);
+    
+    if (__DEV__) {
+      console.log('[HomeScreen] chartData:', {
+        contentFilter,
+        seriesLength: series.length,
+        mappedLength: mapped.length,
+        timeRange,
+      });
+    }
+    
+    return mapped;
+  }, [data, contentFilter, timeRange]);
 
   // Get asset color based on index
   const getAssetColor = (index: number) => {
@@ -423,6 +516,60 @@ export default function HomeScreen() {
 
   const delta = data.total.delta;
   const isPositive = delta.absolute >= 0;
+  
+  const isIncreasing = valueDirectionRef.current === 'increasing';
+  const isDecreasing = valueDirectionRef.current === 'decreasing';
+  
+  // Interpolate color opacity - when 0, use default color, when 1, use animated color
+  const animatedColorOpacity = colorOpacityAnim;
+  
+  // Calculate dollars and cents separately for portfolio value
+  const portfolioValue = Math.round(data.total.current * 100) / 100; // Round to 2 decimals
+  const portfolioDollars = Math.floor(portfolioValue);
+  const portfolioCents = Math.round((portfolioValue % 1) * 100);
+  const portfolioCentsTens = Math.floor(portfolioCents / 10);
+  const portfolioCentsOnes = portfolioCents % 10;
+  
+  // Split dollars into individual digits (left to right)
+  const portfolioDollarsStr = portfolioDollars.toString();
+  const portfolioDollarsDigits = portfolioDollarsStr.split('').map(Number);
+  
+  // Track previous values
+  const prevPortfolioDollarsDigits = previousPortfolioDollarsDigitsRef.current ?? portfolioDollarsDigits;
+  const prevPortfolioCentsTens = previousPortfolioCentsTensRef.current ?? portfolioCentsTens;
+  const prevPortfolioCentsOnes = previousPortfolioCentsOnesRef.current ?? portfolioCentsOnes;
+  
+  // Find the leftmost changing digit position
+  // Position is: 0 = leftmost dollar digit, portfolioDollarsStr.length = cents tens, portfolioDollarsStr.length + 1 = cents ones
+  let portfolioLeftmostChangePosition = -1;
+  let portfolioIsIncrease = false;
+  
+  // Check dollars digits (left to right)
+  for (let i = 0; i < Math.max(portfolioDollarsDigits.length, prevPortfolioDollarsDigits.length); i++) {
+    const currentDigit = i < portfolioDollarsDigits.length ? portfolioDollarsDigits[i] : 0;
+    const prevDigit = i < prevPortfolioDollarsDigits.length ? prevPortfolioDollarsDigits[i] : 0;
+    if (currentDigit !== prevDigit) {
+      portfolioLeftmostChangePosition = i;
+      portfolioIsIncrease = currentDigit > prevDigit;
+      break;
+    }
+  }
+  
+  // If no change in dollars, check cents
+  if (portfolioLeftmostChangePosition === -1) {
+    if (portfolioCentsTens !== prevPortfolioCentsTens) {
+      portfolioLeftmostChangePosition = portfolioDollarsStr.length;
+      portfolioIsIncrease = portfolioCentsTens > prevPortfolioCentsTens;
+    } else if (portfolioCentsOnes !== prevPortfolioCentsOnes) {
+      portfolioLeftmostChangePosition = portfolioDollarsStr.length + 1;
+      portfolioIsIncrease = portfolioCentsOnes > prevPortfolioCentsOnes;
+    }
+  }
+  
+  // Update refs
+  previousPortfolioDollarsDigitsRef.current = portfolioDollarsDigits;
+  previousPortfolioCentsTensRef.current = portfolioCentsTens;
+  previousPortfolioCentsOnesRef.current = portfolioCentsOnes;
 
   return (
     <>
@@ -446,17 +593,175 @@ export default function HomeScreen() {
       >
         {/* Total Portfolio Section */}
         <View style={[styles.portfolioSection, { paddingTop: Math.max(insets.top, 20) + 20 }]}>
+          {/* Logout Button - Positioned absolutely */}
+          <TouchableOpacity 
+            onPress={logout} 
+            style={[styles.logoutButton, styles.logoutButtonAbsolute, { top: Math.max(insets.top, 20) + 20, right: 20 }]}
+          >
+            <Text style={styles.logoutButtonText}>Logout</Text>
+          </TouchableOpacity>
         <View style={styles.portfolioValueContainer}>
           <View style={styles.currencyContainer}>
             <Text style={styles.currencySymbol}>$</Text>
           </View>
           <View style={styles.valueContainer}>
-            <AnimatedNumbers
-              animateToNumber={Math.round(data.total.current * 100) / 100}
-              fontStyle={styles.portfolioValue}
-              animationDuration={800}
-              includeComma={true}
-            />
+            <View style={styles.portfolioValueWrapper}>
+              {/* Default color layer (fades out when colored) */}
+              <Animated.View
+                style={{
+                  opacity: animatedColorOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 0],
+                  }),
+                }}
+              >
+                <View style={styles.portfolioValueInnerContainer}>
+                  {/* Render dollars digits with commas */}
+                  {portfolioDollarsStr.split('').map((digit, index) => {
+                    const currentDigit = parseInt(digit);
+                    const shouldAnimate = portfolioLeftmostChangePosition !== -1 && index >= portfolioLeftmostChangePosition;
+                    // Add comma before every 3rd digit from right (except the last group)
+                    const shouldAddComma = index > 0 && (portfolioDollarsStr.length - index) % 3 === 0;
+                    
+                    return (
+                      <React.Fragment key={index}>
+                        {shouldAddComma && (
+                          <Text style={[styles.portfolioValue, styles.portfolioValueDefault]}>,
+                          </Text>
+                        )}
+                        {shouldAnimate ? (
+                          <AnimatedNumbers
+                            animateToNumber={currentDigit}
+                            fontStyle={[
+                              styles.portfolioValue,
+                              styles.portfolioValueDefault,
+                            ]}
+                            animationDuration={800}
+                            includeComma={false}
+                          />
+                        ) : (
+                          <Text style={[styles.portfolioValue, styles.portfolioValueDefault]}>
+                            {digit}
+                          </Text>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                  <Text style={[styles.portfolioValueDecimal, styles.portfolioValueDefault]}>.</Text>
+                  {portfolioLeftmostChangePosition !== -1 && portfolioLeftmostChangePosition <= portfolioDollarsStr.length ? (
+                    <AnimatedNumbers
+                      animateToNumber={portfolioCentsTens}
+                      fontStyle={[
+                        styles.portfolioValue,
+                        styles.portfolioValueDefault,
+                      ]}
+                      animationDuration={800}
+                      includeComma={false}
+                    />
+                  ) : (
+                    <Text style={[styles.portfolioValue, styles.portfolioValueDefault]}>
+                      {portfolioCentsTens}
+                    </Text>
+                  )}
+                  {portfolioLeftmostChangePosition !== -1 && portfolioLeftmostChangePosition <= portfolioDollarsStr.length + 1 ? (
+                    <AnimatedNumbers
+                      animateToNumber={portfolioCentsOnes}
+                      fontStyle={[
+                        styles.portfolioValue,
+                        styles.portfolioValueDefault,
+                      ]}
+                      animationDuration={800}
+                      includeComma={false}
+                    />
+                  ) : (
+                    <Text style={[styles.portfolioValue, styles.portfolioValueDefault]}>
+                      {portfolioCentsOnes}
+                    </Text>
+                  )}
+                </View>
+              </Animated.View>
+              {/* Animated color layer (fades in/out) */}
+              <Animated.View
+                style={[
+                  StyleSheet.absoluteFill,
+                  {
+                    opacity: animatedColorOpacity,
+                  },
+                ]}
+                pointerEvents="none"
+              >
+                <View style={styles.portfolioValueInnerContainer}>
+                  {/* Render dollars digits with commas */}
+                  {portfolioDollarsStr.split('').map((digit, index) => {
+                    const currentDigit = parseInt(digit);
+                    const shouldAnimate = portfolioLeftmostChangePosition !== -1 && index >= portfolioLeftmostChangePosition;
+                    // Add comma before every 3rd digit from right (except the last group)
+                    const shouldAddComma = index > 0 && (portfolioDollarsStr.length - index) % 3 === 0;
+                    
+                    return (
+                      <React.Fragment key={index}>
+                        {shouldAddComma && (
+                          <Text style={[styles.portfolioValue, { color: portfolioValueColor }]}>,
+                          </Text>
+                        )}
+                        {shouldAnimate ? (
+                          <AnimatedNumbers
+                            animateToNumber={currentDigit}
+                            fontStyle={[
+                              styles.portfolioValue,
+                              {
+                                color: portfolioValueColor,
+                              },
+                            ]}
+                            animationDuration={800}
+                            includeComma={false}
+                          />
+                        ) : (
+                          <Text style={[styles.portfolioValue, { color: portfolioValueColor }]}>
+                            {digit}
+                          </Text>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                  <Text style={[styles.portfolioValueDecimal, { color: portfolioValueColor }]}>.</Text>
+                  {portfolioLeftmostChangePosition !== -1 && portfolioLeftmostChangePosition <= portfolioDollarsStr.length ? (
+                    <AnimatedNumbers
+                      animateToNumber={portfolioCentsTens}
+                      fontStyle={[
+                        styles.portfolioValue,
+                        {
+                          color: portfolioValueColor,
+                        },
+                      ]}
+                      animationDuration={800}
+                      includeComma={false}
+                    />
+                  ) : (
+                    <Text style={[styles.portfolioValue, { color: portfolioValueColor }]}>
+                      {portfolioCentsTens}
+                    </Text>
+                  )}
+                  {portfolioLeftmostChangePosition !== -1 && portfolioLeftmostChangePosition <= portfolioDollarsStr.length + 1 ? (
+                    <AnimatedNumbers
+                      animateToNumber={portfolioCentsOnes}
+                      fontStyle={[
+                        styles.portfolioValue,
+                        {
+                          color: portfolioValueColor,
+                        },
+                      ]}
+                      animationDuration={800}
+                      includeComma={false}
+                    />
+                  ) : (
+                    <Text style={[styles.portfolioValue, { color: portfolioValueColor }]}>
+                      {portfolioCentsOnes}
+                    </Text>
+                  )}
+                </View>
+              </Animated.View>
+            </View>
           </View>
         </View>
         <View style={[styles.deltaContainer, { paddingLeft: deltaPaddingLeft }]}>
@@ -464,8 +769,16 @@ export default function HomeScreen() {
             {isPositive ? '↑' : '↓'}
           </Text>
           <Text style={[styles.deltaText, isPositive ? styles.deltaTextPositive : styles.deltaTextNegative]}>
-            {formatCurrency(Math.abs(delta.absolute))} ({Math.abs(delta.percent).toFixed(2)}%)
+            {formatCurrency(Math.abs(delta.absolute))}
           </Text>
+          <View style={[
+            styles.deltaPercentPill,
+            isPositive ? styles.deltaPercentPillPositive : styles.deltaPercentPillNegative
+          ]}>
+            <Text style={styles.deltaPercentPillText}>
+              {Math.abs(delta.percent).toFixed(2)}%
+            </Text>
+          </View>
         </View>
       </View>
 
@@ -501,6 +814,16 @@ export default function HomeScreen() {
             timeRange={timeRange}
             onDragStart={() => setScrollEnabled(false)}
             onDragEnd={() => setScrollEnabled(true)}
+            config={{
+              lineColor: Colors.chartOrange,
+              gradientStartColor: Colors.chartOrange,
+              gradientEndColor: Colors.chartOrange,
+              gradientStartOpacity: 0.3,
+              gradientEndOpacity: 0,
+              curved: timeRange !== '1W', // Straight lines for 1W (spiky), curves for longer timeframes
+              showDots: false,
+              enableDrag: true,
+            }}
           />
         </View>
         {/* Content Filters - outside chart container to maintain proper alignment */}
@@ -535,7 +858,7 @@ export default function HomeScreen() {
         <View style={styles.allocationBar}>
           {data.allocation.map((item, index) => (
             <View
-              key={item.asset_type}
+              key={item.ticker}
               style={[
                 styles.allocationSegment,
                 {
@@ -549,9 +872,13 @@ export default function HomeScreen() {
 
         {/* Asset List */}
         {data.allocation.map((item, index) => {
-          const assetInfo = formatAssetType(item.asset_type);
           return (
-            <View key={item.asset_type} style={styles.assetItem}>
+            <TouchableOpacity
+              key={item.ticker}
+              style={styles.assetItem}
+              onPress={() => navigation.navigate('AssetDetail', { ticker: item.ticker })}
+              activeOpacity={0.7}
+            >
               <View style={styles.assetItemLeft}>
                 <View
                   style={[
@@ -560,8 +887,8 @@ export default function HomeScreen() {
                   ]}
                 />
                 <View style={styles.assetItemText}>
-                  <Text style={styles.assetTicker}>{assetInfo.ticker}</Text>
-                  <Text style={styles.assetName}>{assetInfo.name}</Text>
+                  <Text style={styles.assetTicker}>{item.ticker}</Text>
+                  <Text style={styles.assetName}>{item.ticker}</Text>
                 </View>
               </View>
               <View style={styles.assetItemRight}>
@@ -570,7 +897,7 @@ export default function HomeScreen() {
                   {item.percent.toFixed(1)}%
                 </Text>
               </View>
-            </View>
+            </TouchableOpacity>
           );
         })}
       </View>
@@ -587,6 +914,35 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     overflow: 'visible', // Allow content to extend beyond bounds
+  },
+  header: {
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: Colors.textPrimary,
+  },
+  logoutButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: Colors.backgroundGrey,
+  },
+  logoutButtonAbsolute: {
+    position: 'absolute',
+    zIndex: 10,
+  },
+  logoutButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textPrimary,
   },
   loadingContainer: {
     flex: 1,
@@ -609,6 +965,7 @@ const styles = StyleSheet.create({
   portfolioSection: {
     paddingHorizontal: 20,
     paddingBottom: 16,
+    position: 'relative',
   },
   portfolioLabel: {
     fontSize: 14,
@@ -632,7 +989,26 @@ const styles = StyleSheet.create({
   valueContainer: {
     flex: 1,
   },
+  portfolioValueWrapper: {
+    position: 'relative',
+    height: 36, // Ensure enough height for absoluteFill
+    justifyContent: 'center',
+  },
+  portfolioValueInnerContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
   portfolioValue: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: Colors.textPrimary,
+    letterSpacing: -1,
+    lineHeight: 36,
+  },
+  portfolioValueDefault: {
+    color: Colors.textPrimary, // Explicitly set default color
+  },
+  portfolioValueDecimal: {
     fontSize: 36,
     fontWeight: 'bold',
     color: Colors.textPrimary,
@@ -654,15 +1030,32 @@ const styles = StyleSheet.create({
     marginBottom: -1, // Slight adjustment to align with text baseline
   },
   deltaText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '500',
     letterSpacing: -0.3,
   },
   deltaTextPositive: {
-    color: Colors.green,
+    color: Colors.greenDark,
   },
   deltaTextNegative: {
-    color: Colors.red,
+    color: Colors.redDark,
+  },
+  deltaPercentPill: {
+    marginLeft: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  deltaPercentPillPositive: {
+    backgroundColor: Colors.greenDark,
+  },
+  deltaPercentPillNegative: {
+    backgroundColor: Colors.redDark,
+  },
+  deltaPercentPillText: {
+    color: Colors.backgroundWhite,
+    fontSize: 12,
+    fontWeight: '600',
   },
   timeRangeContainer: {
     flexDirection: 'row',
@@ -772,7 +1165,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   assetName: {
-    fontSize: 14,
+    fontSize: 12,
     color: Colors.textSecondary,
   },
   assetItemRight: {
@@ -785,7 +1178,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   assetPercent: {
-    fontSize: 14,
+    fontSize: 12,
     color: Colors.textSecondary,
   },
   errorText: {

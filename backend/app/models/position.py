@@ -20,7 +20,7 @@ class Position(Base):
     cost_basis = Column(Numeric(15, 2), nullable=False)  # Total cost basis
     market_value = Column(Numeric(15, 2), nullable=True)  # Current market value
     asset_type = Column(String, nullable=True)  # e.g., "preferred_stock", "common_stock", "etf", "bond"
-    snapshot_timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)  # Historical record timestamp
+    snapshot_timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)  # Last sync/update timestamp (for current state only)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     

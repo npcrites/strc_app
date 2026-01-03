@@ -1,111 +1,182 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Linking,
   Alert,
+  Platform,
 } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { useAuth } from '../context/AuthContext';
 import { Colors } from '../constants/colors';
+import Constants from 'expo-constants';
 
 export default function LoginScreen() {
-  const { login } = useAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const { loginWithToken, demoLogin } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const apiBaseUrl = __DEV__
+    ? (Constants.expoConfig?.extra?.apiUrl || 'http://localhost:8000/api')
+    : 'https://api.strctracker.com/api';
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please enter both email and password');
-      return;
-    }
-
-    setLoading(true);
+  const handleDemoLogin = async () => {
+    setDemoLoading(true);
     try {
-      const result = await login(email, password);
+      const result = await demoLogin();
       if (!result.success) {
-        // Ensure we have a clean error message
-        let errorMessage = result.error || 'Invalid credentials';
-        
-        // Clean up any [object Object] strings
-        if (errorMessage.includes('[object Object]')) {
-          errorMessage = 'Network error: Could not connect to server. Please check your connection.';
-        }
-        
-        console.error('Login failed:', errorMessage);
-        Alert.alert('Login Failed', errorMessage);
+        Alert.alert('Demo Login Failed', result.error || 'Failed to login');
       }
     } catch (error) {
-      let errorMessage = 'An unexpected error occurred';
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (typeof error === 'string') {
-        errorMessage = error;
+      console.error('Demo login error:', error);
+      Alert.alert('Error', 'Failed to login');
+    } finally {
+      setDemoLoading(false);
+    }
+  };
+
+  const handleAlpacaLogin = async () => {
+    try {
+      setLoading(true);
+      
+      // Get the authorization URL from backend (as JSON)
+      const authResponse = await fetch(`${apiBaseUrl}/users/auth/alpaca/authorize?env=paper&return_url=true`);
+      
+      if (!authResponse.ok) {
+        throw new Error('Failed to get authorization URL');
+      }
+      
+      const authData = await authResponse.json();
+      const authUrl = authData.authorization_url;
+      
+      // Configure redirect URI for deep linking
+      // The backend will redirect to this after OAuth completes
+      const redirectUri = Platform.select({
+        ios: 'strctracker://auth/callback',
+        android: 'strctracker://auth/callback',
+        default: 'strctracker://auth/callback',
+      });
+      
+      console.log('Opening OAuth in-app browser:', authUrl);
+      
+      // Use openBrowserAsync instead of openAuthSessionAsync to avoid native banner
+      // This opens a regular in-app browser without the "app wants to use" prompt
+      const browserResult = await WebBrowser.openBrowserAsync(authUrl, {
+        // iOS options
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+        // Android options
+        enableBarCollapsing: false,
+        // Toolbar color (optional)
+        toolbarColor: Colors.backgroundWhite,
+        // Controls whether to show title bar
+        showTitle: true,
+      });
+      
+      console.log('OAuth browser result:', browserResult);
+      
+      // With openBrowserAsync, we don't get automatic redirect handling
+      // The redirect will trigger the deep link handler below via Linking
+      // So we just close the browser and wait for the deep link
+      if (browserResult.type === 'opened') {
+        console.log('OAuth browser opened successfully');
+        // The deep link handler in useEffect will handle the callback
+      } else if (browserResult.type === 'cancel') {
+        console.log('User cancelled OAuth flow');
+        // Don't show error for user cancellation
       } else {
-        errorMessage = String(error);
+        console.log('Browser closed or dismissed');
       }
-      
-      // Clean up any [object Object] strings
-      if (errorMessage.includes('[object Object]')) {
-        errorMessage = 'Network error: Could not connect to server.';
-      }
-      
-      console.error('Login exception:', error);
+    } catch (error) {
+      console.error('Error opening OAuth URL:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to open Alpaca login page';
       Alert.alert('Error', errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
+  // Handle deep link callback (when user returns from OAuth)
+  useEffect(() => {
+    const handleDeepLink = async (url: string) => {
+      try {
+        // Close the browser if it's still open
+        await WebBrowser.dismissBrowser();
+        
+        // Parse the URL - format: strctracker://auth/callback?token=...&token_type=bearer
+        const urlObj = new URL(url);
+        const token = urlObj.searchParams.get('token');
+        const tokenType = urlObj.searchParams.get('token_type');
+        
+        if (token && tokenType === 'bearer') {
+          console.log('OAuth callback received, setting token');
+          await loginWithToken(token);
+        } else {
+          Alert.alert('Error', 'Invalid callback: missing token');
+        }
+      } catch (error) {
+        console.error('Error handling deep link:', error);
+        Alert.alert('Error', 'Failed to complete authentication');
+      }
+    };
+
+    // Listen for initial URL (app opened via deep link)
+    Linking.getInitialURL().then((url) => {
+      if (url && url.includes('auth/callback')) {
+        handleDeepLink(url);
+      }
+    });
+
+    // Listen for URL events (app already open)
+    const subscription = Linking.addEventListener('url', (event) => {
+      if (event.url && event.url.includes('auth/callback')) {
+        handleDeepLink(event.url);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [loginWithToken]);
+
   return (
     <View style={styles.container}>
       <View style={styles.content}>
         <Text style={styles.title}>STRC Tracker</Text>
-        <Text style={styles.subtitle}>Sign in to view your dashboard</Text>
+        <Text style={styles.subtitle}>Sign in with Alpaca to view your dashboard</Text>
 
         <View style={styles.form}>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor={Colors.textTertiary}
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            autoComplete="email"
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={Colors.textTertiary}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoComplete="password"
-          />
-
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
+            style={[styles.button, styles.buttonPrimary, (loading || demoLoading) && styles.buttonDisabled]}
+            onPress={handleDemoLogin}
+            disabled={loading || demoLoading}
           >
-            {loading ? (
+            {demoLoading ? (
               <ActivityIndicator color={Colors.backgroundWhite} />
             ) : (
-              <Text style={styles.buttonText}>Sign In</Text>
+              <Text style={styles.buttonText}>Demo Login</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.buttonSecondary, (loading || demoLoading) && styles.buttonDisabled]}
+            onPress={handleAlpacaLogin}
+            disabled={loading || demoLoading}
+          >
+            {loading ? (
+              <ActivityIndicator color={Colors.orange} />
+            ) : (
+              <Text style={[styles.buttonText, styles.buttonTextSecondary]}>Login with Alpaca</Text>
             )}
           </TouchableOpacity>
         </View>
 
-        <View style={styles.demoInfo}>
-          <Text style={styles.demoTitle}>Demo Credentials:</Text>
-          <Text style={styles.demoText}>Email: demo@example.com</Text>
-          <Text style={styles.demoText}>Password: demo123</Text>
+        <View style={styles.infoBox}>
+          <Text style={styles.infoTitle}>How it works:</Text>
+          <Text style={styles.infoText}>1. Click "Login with Alpaca"</Text>
+          <Text style={styles.infoText}>2. Authorize the app on Alpaca</Text>
+          <Text style={styles.infoText}>3. You'll be redirected back to the app</Text>
         </View>
       </View>
     </View>
@@ -152,11 +223,18 @@ const styles = StyleSheet.create({
     borderColor: Colors.backgroundGrey,
   },
   button: {
-    backgroundColor: Colors.orange,
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 12,
+  },
+  buttonPrimary: {
+    backgroundColor: Colors.orange,
+  },
+  buttonSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: Colors.orange,
   },
   buttonDisabled: {
     opacity: 0.6,
@@ -166,19 +244,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  demoInfo: {
+  buttonTextSecondary: {
+    color: Colors.orange,
+  },
+  infoBox: {
     backgroundColor: Colors.backgroundGrey,
     borderRadius: 8,
     padding: 16,
-    marginTop: 16,
+    marginTop: 24,
   },
-  demoTitle: {
+  infoTitle: {
     fontSize: 14,
     fontWeight: '600',
     color: Colors.textPrimary,
     marginBottom: 8,
   },
-  demoText: {
+  infoText: {
     fontSize: 14,
     color: Colors.textSecondary,
     marginBottom: 4,

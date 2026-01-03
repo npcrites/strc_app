@@ -64,10 +64,65 @@ function useChartData(
   // Downsample data for performance
   const downsampledData = useMemo(() => downsampleData(data, timeRange), [data, timeRange]);
 
-  // Convert to chart format
-  const chartData = useMemo(() => {
-    return convertToChartData(downsampledData);
+  // Normalize x-axis spacing for even visual distribution (but keep original timestamps for tooltips)
+  // This gives us: even spacing on x-axis + original timestamps for accuracy
+  const normalizedData = useMemo(() => {
+    if (downsampledData.length <= 1) {
+      // Return with originalTimestamp property for consistency
+      return downsampledData.map(point => {
+        const timestamp = typeof point.x === 'string' ? new Date(point.x).getTime() : point.x;
+        return {
+          x: timestamp,
+          y: point.y,
+          originalTimestamp: timestamp,
+        };
+      });
+    }
+    
+    // Convert all x values to numbers (timestamps)
+    const dataWithNumericX = downsampledData.map(point => {
+      const timestamp = typeof point.x === 'string' ? new Date(point.x).getTime() : point.x;
+      return {
+        x: timestamp,
+        y: point.y,
+        originalTimestamp: timestamp, // Keep original
+      };
+    });
+    
+    // Find min and max timestamps
+    const timestamps = dataWithNumericX.map(p => p.x);
+    const minTime = Math.min(...timestamps);
+    const maxTime = Math.max(...timestamps);
+    const timeRange = maxTime - minTime;
+    
+    if (timeRange === 0) {
+      return dataWithNumericX;
+    }
+    
+    // Create evenly spaced x-positions (for visual consistency)
+    // But preserve original timestamps for each point
+    const normalizedData: { x: number; y: number; originalTimestamp: number }[] = [];
+    for (let i = 0; i < dataWithNumericX.length; i++) {
+      // Calculate evenly spaced x-position
+      const normalizedX = minTime + (timeRange * i / (dataWithNumericX.length - 1));
+      
+      // Use original timestamp for this point (for tooltips/snapping)
+      const originalTimestamp = dataWithNumericX[i].originalTimestamp;
+      
+      normalizedData.push({
+        x: normalizedX, // Evenly spaced for x-axis positioning
+        y: dataWithNumericX[i].y, // Original value
+        originalTimestamp: originalTimestamp, // Original timestamp for display
+      });
+    }
+    
+    return normalizedData;
   }, [downsampledData]);
+
+  // Convert to chart format (using normalized x-positions for even spacing)
+  const chartData = useMemo(() => {
+    return convertToChartData(normalizedData);
+  }, [normalizedData]);
 
   // Calculate min/max for the chart
   const minValue = useMemo(() => {
@@ -82,10 +137,6 @@ function useChartData(
     return Math.max(...values);
   }, [downsampledData]);
 
-  // Calculate spacing between data points
-  const spacing = useMemo(() => {
-    return chartData.length > 1 ? width / (chartData.length - 1) : 0;
-  }, [chartData.length, width]);
 
   // Get the interval in milliseconds based on time range
   const getIntervalMs = useCallback((range: TimeRange): number => {
@@ -105,100 +156,56 @@ function useChartData(
   }, []);
 
   // Pre-compute snap points for drag interaction
+  // Use normalized x-positions for even spacing, but original timestamps for display
   const snapPoints = useMemo(() => {
-    if (downsampledData.length === 0) return [];
-    
-    const intervalMs = getIntervalMs(timeRange);
-    const snapPoints: { x: string | number; y: number; timestamp: number }[] = [];
-    
-    // Pre-compute all timestamps once
-    const timestamps = new Array(downsampledData.length);
-    for (let i = 0; i < downsampledData.length; i++) {
-      const d = downsampledData[i];
-      timestamps[i] = {
-        ...d,
-        timestamp: typeof d.x === 'string' ? new Date(d.x).getTime() : d.x,
-      };
+    if (normalizedData.length === 0 || downsampledData.length === 0) {
+      console.warn('[Chart] Missing data for snap points');
+      return [];
     }
     
-    if (timestamps.length === 0) return [];
+    // Validation: Log data point counts for debugging
+    console.log('[Chart] Data point counts:', {
+      original: data.length,
+      downsampled: downsampledData.length,
+      normalized: normalizedData.length,
+      chartData: chartData.length,
+      timeRange,
+    });
     
-    // Find min/max more efficiently
-    let minTime = timestamps[0].timestamp;
-    let maxTime = timestamps[0].timestamp;
-    for (let i = 1; i < timestamps.length; i++) {
-      const ts = timestamps[i].timestamp;
-      if (ts < minTime) minTime = ts;
-      if (ts > maxTime) maxTime = ts;
-    }
+    // Create snap points: normalized x for positioning, original timestamp for display
+    const snapPoints: { x: number; y: number; timestamp: number }[] = [];
     
-    // Find the first valid snap point (aligned to interval)
-    const firstSnapTime = Math.ceil(minTime / intervalMs) * intervalMs;
-    
-    // Use binary search for better performance on large datasets
-    const useBinarySearch = timestamps.length > 50;
-    
-    // Collect all snap points
-    for (let snapTime = firstSnapTime; snapTime <= maxTime; snapTime += intervalMs) {
-      let closestPoint: typeof timestamps[0];
-      let minDiff: number;
+    for (let i = 0; i < normalizedData.length; i++) {
+      const normalizedPoint = normalizedData[i];
       
-      if (useBinarySearch) {
-        // Binary search for closest point
-        let left = 0;
-        let right = timestamps.length - 1;
-        let closestIdx = 0;
-        
-        while (left <= right) {
-          const mid = Math.floor((left + right) / 2);
-          const diff = Math.abs(timestamps[mid].timestamp - snapTime);
-          
-          if (diff < Math.abs(timestamps[closestIdx].timestamp - snapTime)) {
-            closestIdx = mid;
-          }
-          
-          if (timestamps[mid].timestamp < snapTime) {
-            left = mid + 1;
-          } else {
-            right = mid - 1;
-          }
-        }
-        
-        closestPoint = timestamps[closestIdx];
-        minDiff = Math.abs(closestPoint.timestamp - snapTime);
-      } else {
-        // Linear search for small datasets
-        closestPoint = timestamps[0];
-        minDiff = Math.abs(timestamps[0].timestamp - snapTime);
-        
-        for (const point of timestamps) {
-          const diff = Math.abs(point.timestamp - snapTime);
-          if (diff < minDiff) {
-            minDiff = diff;
-            closestPoint = point;
-          }
-        }
-      }
-      
-      // Only add if we haven't already added this point
-      if (snapPoints.length === 0 || 
-          snapPoints[snapPoints.length - 1].timestamp !== closestPoint.timestamp) {
-        snapPoints.push({
-          x: closestPoint.x,
-          y: closestPoint.y,
-          timestamp: closestPoint.timestamp,
-        });
-      }
+      snapPoints.push({
+        x: normalizedPoint.x, // Normalized x-position (evenly spaced)
+        y: normalizedPoint.y,   // Original value
+        timestamp: normalizedPoint.originalTimestamp, // Original timestamp for tooltip display
+      });
     }
+    
+    // Log unique timestamps to see if we have variety
+    const uniqueTimestamps = new Set(snapPoints.map(sp => sp.timestamp));
+    console.log('[Chart] Created snap points:', {
+      count: snapPoints.length,
+      uniqueTimestamps: uniqueTimestamps.size,
+      firstFew: snapPoints.slice(0, 3).map((sp, idx) => ({ 
+        index: idx, 
+        timestamp: new Date(sp.timestamp).toISOString(),
+        y: sp.y,
+      })),
+    });
     
     return snapPoints;
-  }, [downsampledData, timeRange, getIntervalMs]);
+  }, [normalizedData, downsampledData, data.length, timeRange, chartData.length]);
 
-  // Pre-compute time bounds for faster lookups
+  // Pre-compute time bounds for faster lookups (use normalized x-positions for spacing calculations)
   const timeBounds = useMemo(() => {
-    if (downsampledData.length === 0) return { minTime: 0, maxTime: 0 };
+    if (normalizedData.length === 0) return { minTime: 0, maxTime: 0 };
     
-    const timestamps = downsampledData.map(d => typeof d.x === 'string' ? new Date(d.x).getTime() : d.x);
+    // Use normalized x-positions (which are evenly spaced) for calculating positions
+    const timestamps = normalizedData.map(d => d.x);
     let minTime = timestamps[0];
     let maxTime = timestamps[0];
     
@@ -208,7 +215,17 @@ function useChartData(
     }
     
     return { minTime, maxTime };
-  }, [downsampledData]);
+  }, [normalizedData]);
+
+  // Calculate spacing between data points based on actual timestamps
+  // This is an average spacing for rendering purposes (chart library may handle actual spacing)
+  const spacing = useMemo(() => {
+    if (chartData.length <= 1 || timeBounds.maxTime === timeBounds.minTime) {
+      return 0;
+    }
+    // Average spacing based on time range
+    return width / (chartData.length - 1);
+  }, [chartData.length, width, timeBounds]);
 
   return {
     chartData,
@@ -216,7 +233,7 @@ function useChartData(
     minValue,
     maxValue,
     spacing,
-    snapPoints: snapPoints,
+    snapPoints,
     timeBounds,
   };
 }
@@ -309,42 +326,44 @@ function useChartTransition(
       const oldMinValue = prevMinValueRef.current;
       const oldMaxValue = prevMaxValueRef.current;
       
-      // Always animate if timeRange changed (even if data looks similar)
-      // This ensures animations fire when toggling between timeframes repeatedly
-      // For data-only changes (no timeRange change), check if the change is significant
-      // Small price updates during refreshes shouldn't trigger animations
-      const dataIsDifferent = oldChartData.length > 0 && 
-                             oldChartData.length === chartData.length && // Both have same length (60 points)
-                             JSON.stringify(oldChartData) !== JSON.stringify(chartData); // But different values
-      
-      // Check if data change is significant (more than just minor price updates)
-      // Calculate the percentage change in the overall range
+      // For data-only changes (no timeRange change), be very conservative about animations
+      // Only animate if the data structure changed (different length) or if it's a major change
+      // Small price updates during auto-refreshes should NOT trigger animations
       let isSignificantChange = false;
       if (dataChanged && !timeRangeChanged && oldChartData.length > 0 && chartData.length > 0) {
-        const oldRange = prevMaxValueRef.current - prevMinValueRef.current;
-        const newRange = maxValue - minValue;
-        const rangeChange = Math.abs(newRange - oldRange) / (oldRange || 1);
-        
-        // Also check if individual points have changed significantly
-        let significantPointChanges = 0;
-        const changeThreshold = 0.02; // 2% change threshold
-        for (let i = 0; i < Math.min(oldChartData.length, chartData.length); i++) {
-          const oldVal = oldChartData[i]?.value ?? 0;
-          const newVal = chartData[i]?.value ?? 0;
-          const change = Math.abs(newVal - oldVal) / (oldVal || 1);
-          if (change > changeThreshold) {
-            significantPointChanges++;
+        // If data length changed, it's a structural change - animate
+        if (oldChartData.length !== chartData.length) {
+          isSignificantChange = true;
+        } else {
+          // Same length - check if it's a major change
+          const oldRange = prevMaxValueRef.current - prevMinValueRef.current;
+          const newRange = maxValue - minValue;
+          const rangeChange = Math.abs(newRange - oldRange) / (oldRange || 1);
+          
+          // Check if individual points have changed significantly
+          let significantPointChanges = 0;
+          const changeThreshold = 0.05; // 5% change threshold (more conservative)
+          for (let i = 0; i < Math.min(oldChartData.length, chartData.length); i++) {
+            const oldVal = oldChartData[i]?.value ?? 0;
+            const newVal = chartData[i]?.value ?? 0;
+            const change = Math.abs(newVal - oldVal) / (oldVal || 1);
+            if (change > changeThreshold) {
+              significantPointChanges++;
+            }
           }
+          
+          // Only consider it significant if:
+          // 1. Range changed by >10% (was 5%), OR
+          // 2. >20% of points changed significantly (was 10%)
+          // This prevents animations on minor price updates during auto-refresh
+          isSignificantChange = rangeChange > 0.10 || (significantPointChanges / chartData.length) > 0.20;
         }
-        
-        // Consider it significant if range changed by >5% or if >10% of points changed significantly
-        isSignificantChange = rangeChange > 0.05 || (significantPointChanges / chartData.length) > 0.1;
       }
       
-      // Always animate on timeRange change - this ensures it always fires
-      // even when toggling rapidly between the same two timeframes
-      // For data refreshes, only animate if the change is significant
-      const shouldAnimate = timeRangeChanged || (dataChanged && dataIsDifferent && isSignificantChange);
+      // ONLY animate on timeRange change OR if data structure changed significantly
+      // For auto-refreshes with same timeframe, skip animation to prevent reset
+      // This prevents the graph from resetting when data is refreshed but timeframe is unchanged
+      const shouldAnimate = timeRangeChanged || (dataChanged && isSignificantChange);
       
       if (shouldAnimate) {
         // Store old values for animation interpolation
@@ -419,17 +438,18 @@ function useChartTransition(
         });
       } else {
         // No animation needed - update data smoothly without resetting
+        // This happens during auto-refreshes when only prices change slightly
         // Set animation to final state immediately so chart shows new data
         transitionAnim.setValue(1);
         // Clear old animation data to prevent stale interpolation
         oldChartDataForAnimation.current = [];
         // IMPORTANT: Still update the refs so next change has correct "old" data
-        // This ensures smooth updates during refreshes without animation
+        // This ensures smooth updates during refreshes without animation or reset
         prevChartDataRef.current = chartData;
         prevMinValueRef.current = minValue;
         prevMaxValueRef.current = maxValue;
         prevTimeRangeRef.current = timeRange;
-        return; // Early return - no animation needed
+        return; // Early return - no animation needed, chart updates silently
       }
       
       // Update refs to new values AFTER setting up animation
@@ -528,6 +548,7 @@ function useChartDrag({
   spacing,
   snapPoints,
   timeBounds,
+  curved,
   onDragStart,
   onDragEnd,
 }: {
@@ -539,6 +560,7 @@ function useChartDrag({
   spacing: number;
   snapPoints: { x: string | number; y: number; timestamp: number }[];
   timeBounds: { minTime: number; maxTime: number };
+  curved: boolean;
   onDragStart?: () => void;
   onDragEnd?: () => void;
 }) {
@@ -549,6 +571,7 @@ function useChartDrag({
   // React state for drag lifecycle (not for visual updates)
   const [isDragging, setIsDragging] = useState(false);
   const [isHolding, setIsHolding] = useState(false);
+  const [currentDragData, setCurrentDragData] = useState<{ value: number; timestamp: number } | null>(null);
   
   // Refs for drag state and data lookup
   const isDraggingRef = useRef(false);
@@ -566,6 +589,8 @@ function useChartDrag({
   const minValueRef = useRef(0);
   const maxValueRef = useRef(0);
   const spacingRef = useRef(0);
+  const snapPointsRef = useRef<{ x: string | number; y: number; timestamp: number }[]>([]);
+  const curvedRef = useRef(false);
   
   const HOLD_DELAY_MS = 250;
   const MOVEMENT_THRESHOLD = 5;
@@ -576,7 +601,9 @@ function useChartDrag({
     minValueRef.current = minValue;
     maxValueRef.current = maxValue;
     spacingRef.current = spacing;
-  }, [chartData, minValue, maxValue, spacing]);
+    snapPointsRef.current = snapPoints;
+    curvedRef.current = curved;
+  }, [chartData, minValue, maxValue, spacing, snapPoints, curved]);
   
   // Cleanup on unmount
   useEffect(() => {
@@ -589,79 +616,134 @@ function useChartDrag({
   
   // Find nearest snap point to a given x position
   // Returns both the x position and the index for haptic tracking
+  // Find nearest snap point based on normalized x-positions (evenly spaced)
   const findNearestSnapPoint = useCallback((x: number): { x: number; index: number } | null => {
-    if (snapPoints.length === 0) return null;
-    if (timeBounds.maxTime === timeBounds.minTime) return { x, index: 0 };
+    if (snapPoints.length === 0) {
+      console.warn('[Chart] findNearestSnapPoint: No snap points available');
+      return null;
+    }
+    if (snapPoints.length === 1) return { x: 0, index: 0 };
     
-    const ratio = x / screenWidth;
-    const targetTime = timeBounds.minTime + ratio * (timeBounds.maxTime - timeBounds.minTime);
+    // Clamp x to chart bounds
+    const clampedX = Math.max(0, Math.min(x, width));
     
-    // Binary search for nearest snap point
-    let left = 0;
-    let right = snapPoints.length - 1;
-    let nearestIndex = 0;
-    let nearestSnap = snapPoints[0];
-    let minDiff = Math.abs(snapPoints[0].timestamp - targetTime);
+    // Since snap points are evenly spaced (normalized x-positions), we can calculate directly
+    const { minTime, maxTime } = timeBounds;
+    const timeRange = maxTime - minTime;
+    const calculatedSpacing = timeRange > 0 ? width / (snapPoints.length - 1) : 0;
     
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2);
-      const diff = Math.abs(snapPoints[mid].timestamp - targetTime);
-      
-      if (diff < minDiff) {
-        minDiff = diff;
-        nearestSnap = snapPoints[mid];
-        nearestIndex = mid;
+    // Calculate which snap point index this X position is closest to
+    const targetIndex = Math.round(clampedX / calculatedSpacing);
+    const clampedIndex = Math.max(0, Math.min(targetIndex, snapPoints.length - 1));
+    
+    // Calculate the actual X position for this snap point (using normalized x)
+    const snappedX = clampedIndex * calculatedSpacing;
+    
+    // Debug logging (only in dev mode, throttled to avoid spam)
+    if (__DEV__) {
+      const logKey = `snap_${snapPoints.length}_${clampedIndex}`;
+      if (!(findNearestSnapPoint as any).loggedIndices) {
+        (findNearestSnapPoint as any).loggedIndices = new Set();
       }
-      
-      if (snapPoints[mid].timestamp < targetTime) {
-        left = mid + 1;
-      } else {
-        right = mid - 1;
+      if (!(findNearestSnapPoint as any).loggedIndices.has(logKey)) {
+        (findNearestSnapPoint as any).loggedIndices.add(logKey);
+        const snapPoint = snapPoints[clampedIndex];
+        console.log('[Chart] findNearestSnapPoint:', {
+          snapPointsCount: snapPoints.length,
+          width,
+          calculatedSpacing,
+          x,
+          clampedX,
+          targetIndex,
+          clampedIndex,
+          snappedX,
+          originalTimestamp: snapPoint ? new Date(snapPoint.timestamp).toISOString() : 'N/A',
+        });
       }
     }
     
-    // Convert snap point timestamp back to x position
-    const snapRatio = (nearestSnap.timestamp - timeBounds.minTime) / (timeBounds.maxTime - timeBounds.minTime);
-    return { x: snapRatio * screenWidth, index: nearestIndex };
-  }, [snapPoints, timeBounds]);
+    return { x: snappedX, index: clampedIndex };
+  }, [snapPoints, width, timeBounds]);
   
-  // Fast lookup for tracing dot Y position (binary search, no React state)
-  const calculateDotY = useCallback((x: number): number => {
+  // Calculate Y position along the curve at a given X position
+  // For curved lines, we need to interpolate along the Bezier curve, not just use data point value
+  const calculateDotY = useCallback((x: number, curved: boolean): number => {
     const chartData = chartDataRef.current;
     if (chartData.length === 0) return height / 2;
     
-    const spacing = spacingRef.current;
-    let left = 0;
-    let right = chartData.length - 1;
-    let closestIndex = 0;
-    let minDistance = Math.abs(x - 0);
-    
-    // Binary search for closest point
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2);
-      const pointX = mid * spacing;
-      const distance = Math.abs(x - pointX);
-      
-      if (distance < minDistance) {
-        minDistance = distance;
-        closestIndex = mid;
-      }
-      
-      if (pointX < x) {
-        left = mid + 1;
-      } else {
-        right = mid - 1;
-      }
-    }
-    
-    // Calculate Y using refs (no dependency on React state)
+    const width = spacingRef.current * (chartData.length - 1) || 1;
     const valueRange = maxValueRef.current - minValueRef.current || 1;
     const padding = valueRange * 0.1;
     const adjustedMin = minValueRef.current - padding;
     const adjustedMax = maxValueRef.current + padding;
     const adjustedRange = adjustedMax - adjustedMin || 1;
+    const spacing = spacingRef.current;
     
-    return height - ((chartData[closestIndex].value - adjustedMin) / adjustedRange) * height;
+    // Calculate which segment this X falls into
+    const segmentIndex = Math.floor(x / spacing);
+    const clampedIndex = Math.max(0, Math.min(segmentIndex, chartData.length - 2));
+    
+    // Calculate points for this segment (same as generateChartPath)
+    const i = clampedIndex;
+    const currentValue = chartData[i].value;
+    const nextValue = chartData[i + 1].value;
+    
+    const currentY = height - ((currentValue - adjustedMin) / adjustedRange) * height;
+    const nextY = height - ((nextValue - adjustedMin) / adjustedRange) * height;
+    
+    const currentX = i * spacing;
+    const nextX = (i + 1) * spacing;
+    
+    if (!curved || chartData.length <= 2) {
+      // Straight line interpolation
+      const t = (x - currentX) / (nextX - currentX);
+      return currentY + (nextY - currentY) * t;
+    }
+    
+    // Bezier curve interpolation (matches generateChartPath algorithm)
+    const t = (x - currentX) / (nextX - currentX);
+    
+    // Calculate control points (same as generateChartPath)
+    let cp1x: number, cp1y: number, cp2x: number, cp2y: number;
+    
+    if (i === 0) {
+      // First segment
+      cp1x = currentX + (nextX - currentX) / 3;
+      cp1y = currentY;
+      cp2x = currentX + 2 * (nextX - currentX) / 3;
+      cp2y = nextY;
+    } else if (i === chartData.length - 2) {
+      // Last segment
+      const prevValue = chartData[i - 1].value;
+      const prevY = height - ((prevValue - adjustedMin) / adjustedRange) * height;
+      const prevX = (i - 1) * spacing;
+      
+      cp1x = currentX + (nextX - currentX) / 3;
+      cp1y = currentY + (nextY - prevY) / 3;
+      cp2x = currentX + 2 * (nextX - currentX) / 3;
+      cp2y = nextY;
+    } else {
+      // Middle segments
+      const prevValue = chartData[i - 1].value;
+      const prevY = height - ((prevValue - adjustedMin) / adjustedRange) * height;
+      const nextNextValue = chartData[i + 2].value;
+      const nextNextY = height - ((nextNextValue - adjustedMin) / adjustedRange) * height;
+      
+      cp1x = currentX + (nextX - currentX) / 3;
+      cp1y = currentY + (nextY - prevY) / 3;
+      cp2x = currentX + 2 * (nextX - currentX) / 3;
+      cp2y = nextY + (nextY - nextNextY) / 3;
+    }
+    
+    // Cubic Bezier interpolation: B(t) = (1-t)³P₀ + 3(1-t)²tP₁ + 3(1-t)t²P₂ + t³P₃
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const mt = 1 - t;
+    const mt2 = mt * mt;
+    const mt3 = mt2 * mt;
+    
+    const y = mt3 * currentY + 3 * mt2 * t * cp1y + 3 * mt * t2 * cp2y + t3 * nextY;
+    return y;
   }, [height]);
   
   // PERFORMANCE: Update drag position - fully native-driven, zero React re-renders
@@ -671,6 +753,16 @@ function useChartDrag({
     if (snapResult === null) return;
     
     const { x: snappedX, index: snappedIndex } = snapResult;
+    
+    // Get the snap point for tooltip and dot position
+    const snapPoint = snapPoints[snappedIndex];
+    if (!snapPoint) return;
+    
+    // Update current drag data for tooltip
+    setCurrentDragData({
+      value: snapPoint.y,
+      timestamp: snapPoint.timestamp,
+    });
     
     // Haptic feedback when snapping to a new point (tick)
     // Use selectionAsync() for continuous scrubbing - iOS handles throttling automatically
@@ -691,9 +783,10 @@ function useChartDrag({
     // Update native-driven animated values immediately (no re-render)
     // FadeOverlay component listens to dragXAnimated and updates gradient stop position
     dragXAnimated.setValue(snappedX);
-    const dotY = calculateDotY(snappedX);
+    // Calculate dot Y along the curve at this X position
+    const dotY = calculateDotY(snappedX, curvedRef.current);
     dotYAnimated.setValue(dotY);
-  }, [findNearestSnapPoint, calculateDotY]);
+  }, [findNearestSnapPoint, calculateDotY, snapPoints]);
   
   const findNearestSnapPointRef = useRef(findNearestSnapPoint);
   findNearestSnapPointRef.current = findNearestSnapPoint;
@@ -724,14 +817,25 @@ function useChartDrag({
         const { locationX } = evt.nativeEvent;
         const constrainedX = Math.max(0, Math.min(width, locationX));
         const snapResult = findNearestSnapPointRef.current(constrainedX);
-        const finalX = snapResult !== null ? snapResult.x : constrainedX;
+        if (snapResult === null) return;
+        
+        const { x: finalX, index: snappedIndex } = snapResult;
+        const snapPoint = snapPoints[snappedIndex];
+        if (!snapPoint) return;
+        
+        // Update current drag data for tooltip
+        setCurrentDragData({
+          value: snapPoint.y,
+          timestamp: snapPoint.timestamp,
+        });
+        
         dragXRef.current = finalX;
         // Don't set lastSnappedIndexRef here - let updateDragX handle it to ensure first haptic fires
         // Reset the initial haptic flag so we get haptic feedback on the first snap
         hasInitialHapticRef.current = false;
         
         dragXAnimated.setValue(finalX);
-        const dotY = calculateDotY(finalX);
+        const dotY = calculateDotY(finalX, curvedRef.current);
         dotYAnimated.setValue(dotY);
       },
       onPanResponderMove: (evt) => {
@@ -750,6 +854,7 @@ function useChartDrag({
         dragXRef.current = null;
         lastSnappedIndexRef.current = null; // Reset snap tracking
         hasInitialHapticRef.current = false; // Reset initial haptic flag
+        setCurrentDragData(null); // Clear tooltip data
         setIsDragging(false);
         setIsHolding(false);
         isDraggingRef.current = false;
@@ -795,13 +900,24 @@ function useChartDrag({
     initialTouchXRef.current = locationX;
     const constrainedX = Math.max(0, Math.min(width, locationX));
     const snapResult = findNearestSnapPointRef.current(constrainedX);
-    const finalX = snapResult !== null ? snapResult.x : constrainedX;
+    if (snapResult === null) return;
+    
+    const { x: finalX, index: snappedIndex } = snapResult;
+    const snapPoint = snapPoints[snappedIndex];
+    if (!snapPoint) return;
+    
+    // Update current drag data for tooltip
+    setCurrentDragData({
+      value: snapPoint.y,
+      timestamp: snapPoint.timestamp,
+    });
+    
     dragXRef.current = finalX;
     // Don't set lastSnappedIndexRef here - let updateDragX handle it to ensure first haptic fires
     // Reset the initial haptic flag so we get haptic feedback on the first snap
     hasInitialHapticRef.current = false;
     dragXAnimated.setValue(finalX);
-    const dotY = calculateDotY(finalX);
+    const dotY = calculateDotY(finalX, curvedRef.current);
     dotYAnimated.setValue(dotY);
     setIsHolding(true);
     
@@ -893,6 +1009,7 @@ function useChartDrag({
     dragXAnimated,
     dotYAnimated,
     verticalLinePath,
+    currentDragData,
     panResponder,
     handleTouchStart,
     handleTouchMove,
@@ -914,12 +1031,18 @@ export const downsampleData = (data: { x: string | number; y: number }[], timeRa
   }
   
   if (data.length <= TARGET_POINTS) {
+    // For short timeframes (1W), don't interpolate - show actual data points for spiky appearance
+    // Coinbase shows raw price movements on short timeframes, not smoothed interpolations
+    if (timeRange === '1W') {
+      return data; // Return raw data for 1W to show actual price movements
+    }
+    
     // If we have fewer points than target, interpolate to reach exactly TARGET_POINTS
     if (data.length === TARGET_POINTS) {
       return data;
     }
     
-    // Interpolate to reach exactly TARGET_POINTS
+    // Interpolate to reach exactly TARGET_POINTS (for longer timeframes)
     const result: { x: string | number; y: number }[] = [];
     for (let i = 0; i < TARGET_POINTS; i++) {
       const ratio = data.length > 1 ? (i / (TARGET_POINTS - 1)) * (data.length - 1) : 0;
@@ -948,15 +1071,19 @@ export const downsampleData = (data: { x: string | number; y: number }[], timeRa
     return result;
   }
 
-  // Downsample to exactly TARGET_POINTS
+  // For short timeframes (1W), allow more data points to show price movements
+  // Coinbase shows more granular data on short timeframes for spiky appearance
+  const maxPoints = timeRange === '1W' ? 200 : TARGET_POINTS; // More points for 1W
+  
+  // Downsample to maxPoints (but keep more for 1W)
   const result: { x: string | number; y: number }[] = [];
-  const step = data.length / TARGET_POINTS;
+  const step = data.length / maxPoints;
   
   // Always include first point
   result.push(data[0]);
   
-  // Sample points evenly to reach exactly TARGET_POINTS
-  for (let i = 1; i < TARGET_POINTS - 1; i++) {
+  // Sample points evenly to reach maxPoints
+  for (let i = 1; i < maxPoints - 1; i++) {
     const index = Math.round(i * step);
     if (index < data.length) {
       result.push(data[index]);
@@ -968,14 +1095,14 @@ export const downsampleData = (data: { x: string | number; y: number }[], timeRa
     result.push(data[data.length - 1]);
   }
   
-  // Ensure we have exactly TARGET_POINTS (in case of rounding errors)
-  if (result.length !== TARGET_POINTS) {
+  // Ensure we have exactly maxPoints (in case of rounding errors)
+  if (result.length !== maxPoints) {
     // Trim or pad to exact length
-    if (result.length > TARGET_POINTS) {
-      return result.slice(0, TARGET_POINTS);
+    if (result.length > maxPoints) {
+      return result.slice(0, maxPoints);
     } else {
       // Pad with last point if needed
-      while (result.length < TARGET_POINTS) {
+      while (result.length < maxPoints) {
         result.push(result[result.length - 1]);
       }
     }
@@ -984,16 +1111,89 @@ export const downsampleData = (data: { x: string | number; y: number }[], timeRa
   return result;
 };
 
+// Normalize timestamps to be evenly spaced for consistent visual representation
+// This follows Coinbase's approach: evenly spaced x-axis regardless of actual snapshot times
+function normalizeTimestamps(data: { x: string | number; y: number }[]): { x: string | number; y: number }[] {
+  if (data.length <= 1) return data;
+  
+  // Convert all x values to numbers (timestamps)
+  const dataWithNumericX = data.map(point => ({
+    x: typeof point.x === 'string' ? new Date(point.x).getTime() : point.x,
+    y: point.y,
+  })) as { x: number; y: number }[];
+  
+  // Find min and max timestamps
+  const timestamps = dataWithNumericX.map(p => p.x);
+  const minTime = Math.min(...timestamps);
+  const maxTime = Math.max(...timestamps);
+  const timeRange = maxTime - minTime;
+  
+  // If all timestamps are the same, return as-is
+  if (timeRange === 0) return data;
+  
+  // Create evenly spaced timestamps from min to max
+  const normalizedData: { x: number; y: number }[] = [];
+  for (let i = 0; i < data.length; i++) {
+    // Calculate evenly spaced timestamp
+    const normalizedTimestamp = minTime + (timeRange * i / (data.length - 1));
+    
+    // Find the two surrounding data points for interpolation
+    let lowerIndex = 0;
+    let upperIndex = dataWithNumericX.length - 1;
+    
+    // Find the point just before and after the normalized timestamp
+    for (let j = 0; j < dataWithNumericX.length - 1; j++) {
+      if (dataWithNumericX[j].x <= normalizedTimestamp && dataWithNumericX[j + 1].x >= normalizedTimestamp) {
+        lowerIndex = j;
+        upperIndex = j + 1;
+        break;
+      }
+    }
+    
+    // If normalized timestamp is before first point, use first point
+    if (normalizedTimestamp <= dataWithNumericX[0].x) {
+      normalizedData.push({
+        x: normalizedTimestamp,
+        y: dataWithNumericX[0].y,
+      });
+    }
+    // If normalized timestamp is after last point, use last point
+    else if (normalizedTimestamp >= dataWithNumericX[dataWithNumericX.length - 1].x) {
+      normalizedData.push({
+        x: normalizedTimestamp,
+        y: dataWithNumericX[dataWithNumericX.length - 1].y,
+      });
+    }
+    // Interpolate between surrounding points
+    else {
+      const lowerPoint = dataWithNumericX[lowerIndex];
+      const upperPoint = dataWithNumericX[upperIndex];
+      const timeDiff = upperPoint.x - lowerPoint.x;
+      const fraction = timeDiff > 0 ? (normalizedTimestamp - lowerPoint.x) / timeDiff : 0;
+      const interpolatedY = lowerPoint.y + (upperPoint.y - lowerPoint.y) * fraction;
+      
+      normalizedData.push({
+        x: normalizedTimestamp,
+        y: interpolatedY,
+      });
+    }
+  }
+  
+  return normalizedData;
+}
+
 // Convert data to format expected by react-native-gifted-charts
 // Export for testing
-export const convertToChartData = (data: { x: string | number; y: number }[]) => {
+// Accepts both regular data points and normalized data points (with originalTimestamp)
+export const convertToChartData = (data: { x: string | number; y: number; originalTimestamp?: number }[]) => {
   if (!data || data.length === 0) {
     return [];
   }
+  
   // react-native-gifted-charts expects data in format: { value: number, label?: string }
+  // We only need the y value for rendering
   const converted = data.map((point) => ({
     value: point.y,
-    // Don't include label if empty - might cause issues
   }));
   return converted;
 };
@@ -1085,6 +1285,91 @@ export const generateChartPath = (
   
   return { linePath, areaPath };
 };
+
+// Tooltip component for drag interaction
+const DragTooltip = React.memo(({
+  dragXAnimated,
+  dotYAnimated,
+  height,
+  value,
+  timestamp,
+}: {
+  dragXAnimated: Animated.Value;
+  dotYAnimated: Animated.Value;
+  height: number;
+  value: number;
+  timestamp: number;
+}) => {
+  const [tooltipY, setTooltipY] = useState(0);
+  const [tooltipX, setTooltipX] = useState(0);
+  
+  useEffect(() => {
+    const dragXListener = dragXAnimated.addListener(({ value: x }) => {
+      setTooltipX(x);
+    });
+    const dotYListener = dotYAnimated.addListener(({ value: y }) => {
+      // Position tooltip above dot if dot is in lower half, below if in upper half
+      const tooltipOffset = y < height / 2 ? 50 : -80;
+      setTooltipY(y + tooltipOffset);
+    });
+    
+    return () => {
+      dragXAnimated.removeListener(dragXListener);
+      dotYAnimated.removeListener(dotYListener);
+    };
+  }, [dragXAnimated, dotYAnimated, height]);
+  
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        top: tooltipY,
+        left: tooltipX - 60, // Center tooltip on drag line
+        zIndex: 20,
+        pointerEvents: 'none',
+      }}
+    >
+      <View style={{
+        backgroundColor: Colors.backgroundGrey,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        minWidth: 120,
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 5,
+      }}>
+        <Text style={{
+          fontSize: 16,
+          fontWeight: '600',
+          color: Colors.textPrimary,
+          marginBottom: 4,
+        }}>
+          {new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          }).format(value)}
+        </Text>
+        <Text style={{
+          fontSize: 12,
+          color: Colors.textSecondary,
+        }}>
+          {new Intl.DateTimeFormat('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          }).format(new Date(timestamp))}
+        </Text>
+      </View>
+    </View>
+  );
+});
 
 // PERFORMANCE: Fade overlay using SVG mask with animated gradient stop
 // This component uses Animated.Value listener to update gradient stop position
@@ -1461,6 +1746,8 @@ function Chart({
     dotsOpacity,
   } = transitionModule;
   
+  const curved = finalConfig.curved ?? true;
+  
   const dragModule = useChartDrag({
     width,
     height,
@@ -1470,6 +1757,7 @@ function Chart({
     spacing,
     snapPoints,
     timeBounds,
+    curved,
     onDragStart,
     onDragEnd,
   });
@@ -1478,6 +1766,7 @@ function Chart({
     isDragging,
     dragXAnimated,
     dotYAnimated,
+    currentDragData,
     verticalLinePath,
     panResponder,
     handleTouchStart,
@@ -1621,6 +1910,17 @@ function Chart({
           >
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.chartOrange }} />
           </Animated.View>
+          
+          {/* Tooltip showing price and timestamp */}
+          {currentDragData && (
+            <DragTooltip
+              dragXAnimated={dragXAnimated}
+              dotYAnimated={dotYAnimated}
+              height={height}
+              value={currentDragData.value}
+              timestamp={currentDragData.timestamp}
+            />
+          )}
         </>
       )}
     </View>

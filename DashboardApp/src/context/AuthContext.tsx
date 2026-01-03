@@ -11,6 +11,8 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  loginWithToken: (token: string) => Promise<void>;
+  demoLogin: () => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
 }
@@ -223,6 +225,74 @@ If health check passed but login fails, this might be a CORS or request format i
     }
   };
 
+  const loginWithToken = async (token: string): Promise<void> => {
+    try {
+      await AsyncStorage.setItem('auth_token', token);
+      setToken(token);
+      
+      // Load user info
+      try {
+        const userData = await api.get<User>('/users/me', token);
+        setUser(userData);
+        console.log('User data loaded:', userData);
+      } catch (userError) {
+        console.error('Error loading user data:', userError);
+        // Don't fail login if user data can't be loaded
+      }
+    } catch (error) {
+      console.error('Error storing token:', error);
+      throw error;
+    }
+  };
+
+  const demoLogin = async (): Promise<{ success: boolean; error?: string }> => {
+    try {
+      console.log('🔐 Attempting demo login');
+      const loginUrl = `${api.baseUrl}/users/demo/login`;
+      
+      const response = await fetch(loginUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = 'Demo login failed';
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.detail || errorData.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        return { success: false, error: errorMessage };
+      }
+
+      const data: LoginResponse = await response.json();
+      const accessToken = data.access_token;
+
+      await AsyncStorage.setItem('auth_token', accessToken);
+      setToken(accessToken);
+
+      // Load user info
+      try {
+        const userData = await api.get<User>('/users/me', accessToken);
+        setUser(userData);
+        console.log('User data loaded:', userData);
+      } catch (userError) {
+        console.error('Error loading user data:', userError);
+        // Don't fail login if user data can't be loaded
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Demo login error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Demo login failed';
+      return { success: false, error: errorMessage };
+    }
+  };
+
   const logout = async (): Promise<void> => {
     await AsyncStorage.removeItem('auth_token');
     setToken(null);
@@ -234,6 +304,8 @@ If health check passed but login fails, this might be a CORS or request format i
     user,
     loading,
     login,
+    loginWithToken,
+    demoLogin,
     logout,
     isAuthenticated: !!token,
   };

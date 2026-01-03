@@ -15,13 +15,29 @@ from app.models.position import Position
 from app.services.price_service import PriceService
 import logging
 
-logging.basicConfig(level=logging.INFO)
+# Suppress SQLAlchemy logging
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.pool').setLevel(logging.WARNING)
+logging.basicConfig(level=logging.WARNING)  # Only show warnings and errors
 logger = logging.getLogger(__name__)
 
 
-def show_prices(db: Session, label: str = "Current Prices"):
+def show_prices(db: Session, label: str = "Current Prices", compact: bool = False):
     """Display current prices in cache"""
     prices = db.query(AssetPrice).order_by(AssetPrice.symbol).all()
+    
+    if compact:
+        # Compact 1-line summary
+        if not prices:
+            print(f"{label}: No prices in cache")
+            return {}
+        
+        price_list = [f"{p.symbol} ${float(p.price):.2f}" for p in prices[:10]]
+        price_str = ", ".join(price_list)
+        if len(prices) > 10:
+            price_str += f" ... ({len(prices)} total)"
+        print(f"{label}: {price_str}")
+        return {p.symbol: float(p.price) for p in prices}
     
     print(f"\n{label}:")
     print("-" * 60)
@@ -49,82 +65,67 @@ def get_active_symbols(db: Session) -> list:
 
 
 def main():
-    """Test price updates"""
-    print("=" * 60)
+    """Test price updates - concise output"""
+    print("=" * 70)
     print("  PRICE UPDATE TEST")
-    print("=" * 60)
+    print("=" * 70)
     
     db = SessionLocal()
     try:
         # Check for active symbols
         active_symbols = get_active_symbols(db)
-        print(f"\nActive symbols from positions: {active_symbols}")
         
         if not active_symbols:
             print("\n⚠️  No active positions found!")
             print("   Create some positions with shares > 0 to test price updates.")
             return
         
-        # Show current prices
-        before_prices = show_prices(db, "BEFORE Update")
+        print(f"\n📊 Active symbols: {', '.join(active_symbols)}")
+        
+        # Show current prices (compact)
+        before_prices = show_prices(db, "Before", compact=True)
         
         # Trigger update
-        print("\n" + "=" * 60)
-        print("  Triggering price update from Alpaca API...")
-        print("=" * 60)
+        print("\n🔄 Fetching latest prices from Alpaca...")
         
         price_service = PriceService()
         stats = price_service.update_all_prices(db)
         
-        print(f"\nUpdate Results:")
-        print(f"  Symbols checked: {stats['symbols_checked']}")
-        print(f"  Prices fetched: {stats['prices_fetched']}")
-        print(f"  Prices updated: {stats['prices_updated']}")
+        print(f"✅ Update complete: {stats['symbols_checked']} checked, "
+              f"{stats['prices_fetched']} fetched, {stats['prices_updated']} updated")
         
         # Wait a moment for database to commit
         time.sleep(0.5)
         
-        # Show updated prices
-        after_prices = show_prices(db, "AFTER Update")
+        # Show updated prices (compact)
+        after_prices = show_prices(db, "After ", compact=True)
         
-        # Show changes
+        # Show summary of changes (only if there were changes)
         if before_prices and after_prices:
-            print("\n" + "=" * 60)
-            print("  PRICE CHANGES")
-            print("=" * 60)
-            
-            all_symbols = set(before_prices.keys()) | set(after_prices.keys())
-            changes_shown = False
-            
-            for symbol in sorted(all_symbols):
+            changed_symbols = []
+            for symbol in sorted(set(before_prices.keys()) | set(after_prices.keys())):
                 before = before_prices.get(symbol)
                 after = after_prices.get(symbol)
                 
-                if before is None:
-                    print(f"  {symbol:<10} NEW: ${after:.2f}")
-                    changes_shown = True
-                elif after is None:
-                    print(f"  {symbol:<10} REMOVED (was ${before:.2f})")
-                    changes_shown = True
-                elif before != after:
+                if before is None and after is not None:
+                    changed_symbols.append(f"{symbol}: NEW ${after:.2f}")
+                elif before is not None and after is None:
+                    changed_symbols.append(f"{symbol}: REMOVED")
+                elif before is not None and after is not None and before != after:
                     change = after - before
                     change_pct = (change / before * 100) if before > 0 else 0
-                    arrow = "↑" if change > 0 else "↓" if change < 0 else "→"
-                    print(f"  {symbol:<10} {arrow} ${before:.2f} → ${after:.2f} "
-                          f"({change:+.2f}, {change_pct:+.2f}%)")
-                    changes_shown = True
+                    arrow = "↑" if change > 0 else "↓"
+                    changed_symbols.append(f"{symbol}: {arrow} ${before:.2f}→${after:.2f} ({change_pct:+.2f}%)")
             
-            if not changes_shown:
-                print("  No price changes detected (prices may be the same)")
+            if changed_symbols:
+                print(f"\n📈 Changes: {', '.join(changed_symbols)}")
+            else:
+                print("\n✅ No price changes (prices up to date)")
         
-        print("\n" + "=" * 60)
-        print("  Test Complete!")
-        print("=" * 60)
-        print("\nTo monitor prices in real-time, run:")
-        print("  python scripts/monitor_price_updates.py")
-        print()
+        print("\n" + "=" * 70)
         
     except Exception as e:
+        print(f"\n❌ Error: {str(e)}")
         logger.error(f"Error during test: {str(e)}", exc_info=True)
     finally:
         db.close()

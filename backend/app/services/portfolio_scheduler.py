@@ -1,5 +1,5 @@
 """
-Background scheduler for portfolio price updates and snapshots
+Background scheduler for portfolio price updates, position syncing, and snapshots
 """
 from typing import Optional
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.services.price_service import PriceService
 from app.services.snapshot_service import SnapshotService
+from app.services.position_sync_service import PositionSyncService
 from app.core.config import settings
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,41 @@ def update_prices_job() -> None:
         )
     except Exception as e:
         logger.error(f"Error in price update job: {str(e)}", exc_info=True)
+    finally:
+        db.close()
+
+
+def sync_positions_job() -> None:
+    """
+    Job function that runs on schedule to sync positions from Alpaca.
+    Creates a new database session for each run.
+    """
+    if not settings.POSITION_SYNC_ENABLED:
+        logger.debug("Position sync is disabled")
+        return
+    
+    db = SessionLocal()
+    try:
+        logger.info("Starting position sync job")
+        position_sync_service = PositionSyncService()
+        
+        # Run async function in sync context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            stats = loop.run_until_complete(
+                position_sync_service.sync_all_users_positions(db, use_paper=True)
+            )
+            logger.info(
+                f"Position sync completed: {stats['users_successful']}/{stats['users_processed']} users successful, "
+                f"{stats['total_positions_fetched']} positions fetched, "
+                f"{stats['total_positions_created']} created, {stats['total_positions_updated']} updated, "
+                f"{stats['total_positions_removed']} removed"
+            )
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"Error in position sync job: {str(e)}", exc_info=True)
     finally:
         db.close()
 
@@ -79,8 +116,8 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
         return _scheduler
     
     # Check if any jobs are enabled
-    if not settings.PRICE_UPDATE_ENABLED and not settings.SNAPSHOT_ENABLED:
-        logger.info("Portfolio scheduler is disabled (both jobs disabled)")
+    if not settings.PRICE_UPDATE_ENABLED and not settings.POSITION_SYNC_ENABLED and not settings.SNAPSHOT_ENABLED:
+        logger.info("Portfolio scheduler is disabled (all jobs disabled)")
         return None
     
     # Create scheduler
@@ -99,6 +136,20 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
         logger.info(f"Price update job scheduled: every {interval_seconds} seconds")
     else:
         logger.info("Price update job is disabled")
+    
+    # Schedule position sync job
+    if settings.POSITION_SYNC_ENABLED:
+        interval_minutes = settings.POSITION_SYNC_INTERVAL_MINUTES
+        _scheduler.add_job(
+            func=sync_positions_job,
+            trigger=IntervalTrigger(minutes=interval_minutes),
+            id='position_sync_job',
+            name='Position Sync Job',
+            replace_existing=True
+        )
+        logger.info(f"Position sync job scheduled: every {interval_minutes} minutes")
+    else:
+        logger.info("Position sync job is disabled")
     
     # Schedule snapshot creation job
     if settings.SNAPSHOT_ENABLED:

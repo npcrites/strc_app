@@ -48,6 +48,12 @@ function filterTimeSeries(
   range: TimeRange
 ): TimeSeriesPoint[] {
   if (range === 'ALL') {
+    if (__DEV__) {
+      console.log('[DashboardFilter] filterTimeSeries (ALL):', {
+        inputLength: series.length,
+        outputLength: series.length,
+      });
+    }
     return series;
   }
   
@@ -55,10 +61,24 @@ function filterTimeSeries(
   const startTime = start.getTime();
   const endTime = end.getTime();
   
-  return series.filter(point => {
+  const filtered = series.filter(point => {
     const pointTime = new Date(point.timestamp).getTime();
     return pointTime >= startTime && pointTime <= endTime;
   });
+  
+  if (__DEV__) {
+    console.log('[DashboardFilter] filterTimeSeries:', {
+      range,
+      inputLength: series.length,
+      outputLength: filtered.length,
+      startTime: new Date(startTime).toISOString(),
+      endTime: new Date(endTime).toISOString(),
+      firstPoint: series[0] ? new Date(series[0].timestamp).toISOString() : 'none',
+      lastPoint: series[series.length - 1] ? new Date(series[series.length - 1].timestamp).toISOString() : 'none',
+    });
+  }
+  
+  return filtered;
 }
 
 /**
@@ -134,6 +154,10 @@ function filterActivity(
 
 /**
  * Calculate totals for a filtered time range
+ * 
+ * IMPORTANT: total.current always uses the backend's live value (from allData.total.current)
+ * This ensures consistency across all time ranges since it represents the current portfolio value
+ * calculated from live prices, not historical snapshot data.
  */
 function calculateTotalsForRange(
   allData: DashboardSnapshot,
@@ -145,13 +169,19 @@ function calculateTotalsForRange(
     return allData.total;
   }
   
+  // Use the backend's current total (calculated from live prices)
+  // This ensures consistency across all time ranges
+  const currentValue = allData.total.current;
+  
+  // Calculate start value from the filtered series
   const startValue = filteredSeries[0].value;
-  const endValue = filteredSeries[filteredSeries.length - 1].value;
-  const absolute = endValue - startValue;
+  
+  // Calculate delta from current (live) value vs historical start
+  const absolute = currentValue - startValue;
   const percent = startValue > 0 ? (absolute / startValue) * 100 : 0;
   
   return {
-    current: endValue,
+    current: currentValue, // Always use backend's live value
     start: startValue,
     delta: {
       absolute: Math.round(absolute * 100) / 100,

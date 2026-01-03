@@ -356,3 +356,183 @@ def _round_to_bucket(timestamp: datetime, bucket_size: timedelta) -> datetime:
     else:
         return timestamp
 
+
+@router.post("/refresh-prices")
+async def refresh_prices(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Manually trigger a price update for all active positions.
+    
+    This endpoint:
+    - Fetches latest prices from Alpaca API for all symbols in user's positions
+    - Updates the asset_prices cache table
+    - Returns statistics about the update
+    
+    Note: The scheduler should be updating prices automatically,
+    but this endpoint allows manual refresh.
+    """
+    try:
+        from app.models.asset_price import AssetPrice
+        from sqlalchemy import func
+        
+        # Get current status before update
+        price_service = PriceService()
+        
+        # Get user's active symbols
+        user_id = int(user.get("user_id"))
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.shares > 0
+        ).all()
+        
+        symbols = list(set([p.ticker.upper() for p in positions if p.ticker]))
+        
+        # Count existing prices
+        existing_count = db.query(AssetPrice).filter(
+            func.upper(AssetPrice.symbol).in_([s.upper() for s in symbols])
+        ).count() if symbols else 0
+        
+        # Get last update time
+        last_update = None
+        if symbols:
+            last_update = db.query(func.max(AssetPrice.updated_at)).filter(
+                func.upper(AssetPrice.symbol).in_([s.upper() for s in symbols])
+            ).scalar()
+        
+        # Trigger price update
+        stats = price_service.update_all_prices(db)
+        
+        # Get updated count after refresh
+        updated_count = db.query(AssetPrice).filter(
+            func.upper(AssetPrice.symbol).in_([s.upper() for s in symbols])
+        ).count() if symbols else 0
+        
+        return {
+            "status": "success",
+            "message": "Price update completed",
+            "statistics": {
+                "symbols_checked": stats["symbols_checked"],
+                "prices_fetched": stats["prices_fetched"],
+                "prices_updated": stats["prices_updated"],
+                "cached_prices_count": updated_count,
+                "existing_before": existing_count,
+            },
+            "last_update_before": last_update.isoformat() if last_update else None,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error refreshing prices: {str(e)}"
+        )
+
+
+@router.get("/price-status")
+async def get_price_status(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Get status of price cache for user's positions.
+    
+    Returns information about:
+    - Which symbols are cached
+    - How fresh the prices are
+    - When prices were last updated
+    - Whether scheduler is likely running
+    """
+    try:
+        from app.models.asset_price import AssetPrice
+        from sqlalchemy import func
+        from datetime import timedelta
+        
+        user_id = int(user.get("user_id"))
+        
+        # Get user's active symbols
+        positions = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.shares > 0
+        ).all()
+        
+        symbols = list(set([p.ticker.upper() for p in positions if p.ticker]))
+        
+        if not symbols:
+            return {
+                "status": "no_positions",
+                "message": "User has no active positions",
+                "symbols": [],
+                "cached_prices": [],
+                "summary": {
+                    "total_symbols": 0,
+                    "cached_count": 0,
+                    "missing_count": 0,
+                    "fresh_count": 0,
+                    "stale_count": 0,
+                }
+            }
+        
+        # Get cached prices for these symbols
+        cached_prices = db.query(AssetPrice).filter(
+            func.upper(AssetPrice.symbol).in_([s.upper() for s in symbols])
+        ).all()
+        
+        now = datetime.utcnow()
+        fresh_threshold = timedelta(minutes=5)
+        
+        price_details = []
+        cached_symbols = set()
+        fresh_count = 0
+        stale_count = 0
+        
+        for price in cached_prices:
+            age = now - price.updated_at
+            is_fresh = age < fresh_threshold
+            
+            if is_fresh:
+                fresh_count += 1
+            else:
+                stale_count += 1
+            
+            cached_symbols.add(price.symbol.upper())
+            price_details.append({
+                "symbol": price.symbol,
+                "price": float(price.price),
+                "updated_at": price.updated_at.isoformat(),
+                "age_seconds": age.total_seconds(),
+                "is_fresh": is_fresh,
+            })
+        
+        missing_symbols = [s for s in symbols if s not in cached_symbols]
+        
+        # Get most recent update time across all prices
+        all_prices_max = db.query(func.max(AssetPrice.updated_at)).scalar()
+        
+        return {
+            "status": "ok",
+            "symbols": symbols,
+            "cached_prices": sorted(price_details, key=lambda x: x["symbol"]),
+            "missing_symbols": missing_symbols,
+            "summary": {
+                "total_symbols": len(symbols),
+                "cached_count": len(cached_prices),
+                "missing_count": len(missing_symbols),
+                "fresh_count": fresh_count,
+                "stale_count": stale_count,
+            },
+            "most_recent_update": all_prices_max.isoformat() if all_prices_max else None,
+            "scheduler_status": {
+                "likely_running": (
+                    all_prices_max is not None and 
+                    (now - all_prices_max).total_seconds() < 300  # Updated in last 5 min
+                ) if all_prices_max else False,
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting price status: {str(e)}"
+        )

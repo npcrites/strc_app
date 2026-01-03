@@ -4,23 +4,13 @@ Authentication and JWT security utilities
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/users/login")
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hash"""
-    return pwd_context.verify(plain_password, hashed_password)
-
-
-def get_password_hash(password: str) -> str:
-    """Hash a password"""
-    return pwd_context.hash(password)
+# OAuth2 scheme for Bearer token authentication
+# tokenUrl is not used for login, but required by OAuth2PasswordBearer
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/users/auth/alpaca/callback")
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

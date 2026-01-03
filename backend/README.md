@@ -4,22 +4,49 @@ FastAPI backend for tracking preferred stock positions, dividends, and ex-divide
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Prerequisites
+
+- Python 3.11+
+- PostgreSQL installed and running
+- Virtual environment (recommended)
+
+### 1. Create Virtual Environment
+
+```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate  # On macOS/Linux: venv/bin/activate
+# On Windows: venv\Scripts\activate
+```
+
+### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment
+### 3. Configure Environment
 
-Copy `.env.example` to `.env` and fill in your values:
+Create a `.env` file in the `backend` directory (copy from `.env.example` if available):
 
 ```bash
-cp .env.example .env
-# Edit .env with your database and Plaid credentials
+cp .env.example .env  # If .env.example exists
+# Edit .env with your settings
 ```
 
-### 3. Setup Database
+Required environment variables:
+```env
+DATABASE_URL=postgresql://user:password@localhost/strc_tracker
+SECRET_KEY=your-secret-key-here
+PLAID_CLIENT_ID=your-plaid-client-id
+PLAID_SECRET=your-plaid-secret
+PLAID_ENV=sandbox
+DEBUG=True
+```
+
+**Note**: Never commit your `.env` file to version control!
+
+### 4. Setup Database
 
 ```bash
 # Create database (if not exists)
@@ -29,19 +56,43 @@ createdb strc_tracker
 python3 -m alembic upgrade head
 ```
 
-### 4. Seed Sample Data (Optional)
+### 5. Seed Sample Data (Optional)
 
 ```bash
 python3 scripts/seed_sample_data.py
 ```
 
-### 5. Run the Server
+This creates a demo user (`demo@example.com` / `demo123`) with sample portfolio data.
 
+### 6. Start the Server
+
+**Recommended: Use the startup script**
 ```bash
-uvicorn app.main:app --reload
+./start_server.sh
 ```
 
-The API will be available at `http://localhost:8000`
+**Alternative: Manual start**
+```bash
+source venv/bin/activate
+python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Important**: Use `--host 0.0.0.0` (not `127.0.0.1`) if you want mobile devices to connect!
+
+### Verify Server is Running
+
+```bash
+curl http://localhost:8000/health
+```
+
+Should return: `{"status":"healthy"}`
+
+### Server URLs
+
+- **API**: http://localhost:8000
+- **Health Check**: http://localhost:8000/health
+- **API Docs (Swagger)**: http://localhost:8000/docs
+- **API Docs (ReDoc)**: http://localhost:8000/redoc
 
 ## Project Structure
 
@@ -81,6 +132,19 @@ backend/
     ├── test_plaid_service.py
     └── test_dividend_engine.py
 ```
+
+## Documentation
+
+Additional documentation is available in the `docs/` directory:
+
+- **[BACKEND_STRUCTURE.md](docs/BACKEND_STRUCTURE.md)** - Detailed backend architecture and structure
+- **[MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md)** - Database migration guide
+- **[TROUBLESHOOTING_MIGRATIONS.md](docs/TROUBLESHOOTING_MIGRATIONS.md)** - Troubleshooting migration issues
+- **[PORTFOLIO_TRACKING_IMPLEMENTATION.md](docs/PORTFOLIO_TRACKING_IMPLEMENTATION.md)** - Portfolio tracking system documentation
+- **[ORGANIZATION.md](ORGANIZATION.md)** - Backend folder organization and file locations
+- **[app/models/README.md](app/models/README.md)** - Database models documentation
+- **[app/services/dashboard/README.md](app/services/dashboard/README.md)** - Dashboard service documentation
+- **[scripts/README.md](scripts/README.md)** - Mock data and utility scripts
 
 ## Configuration Files
 
@@ -169,14 +233,43 @@ Required environment variables (see `.env.example`):
 
 ## Troubleshooting
 
-### Database Connection Issues
+### Common Startup Issues
 
+#### "No module named uvicorn" or Import Errors
+- Make sure virtual environment is activated: `source venv/bin/activate`
+- Reinstall dependencies: `pip install -r requirements.txt`
+- On macOS, always use a virtual environment (PEP 668 requirement)
+
+#### "Port 8000 already in use"
 ```bash
+# Kill the process on port 8000
+lsof -ti:8000 | xargs kill
+
+# Or use a different port
+python3 -m uvicorn app.main:app --reload --port 8001
+```
+
+#### "ModuleNotFoundError: No module named 'app'"
+- Make sure you're in the `backend` directory
+- Ensure virtual environment is activated
+
+#### Database Connection Errors
+```bash
+# Check if PostgreSQL is running
+psql -l
+# Or
+pg_isready
+
 # Test connection
 python3 scripts/test_and_migrate.py
 
 # Fix common issues
 bash scripts/fix_database_connection.sh
+```
+
+Verify your `.env` file has the correct `DATABASE_URL`:
+```
+DATABASE_URL=postgresql://user:password@localhost/strc_tracker
 ```
 
 ### Migration Issues
@@ -187,7 +280,34 @@ python3 -m alembic current
 
 # View migration history
 python3 -m alembic history
+
+# See detailed troubleshooting guide
+# backend/docs/TROUBLESHOOTING_MIGRATIONS.md
 ```
+
+### Accessing from Mobile Device
+
+1. Find your computer's IP address:
+   ```bash
+   # macOS/Linux
+   ipconfig getifaddr en0  # macOS
+   # Or
+   ifconfig | grep "inet " | grep -v 127.0.0.1
+   ```
+
+2. Update `DashboardApp/app.json`:
+   ```json
+   "extra": {
+     "apiUrlDevice": "http://YOUR_IP:8000/api"
+   }
+   ```
+
+3. Make sure:
+   - Server is started with `--host 0.0.0.0` (not `127.0.0.1`)
+   - Both devices are on the same WiFi network
+   - Firewall isn't blocking port 8000
+
+For more detailed troubleshooting, see the [documentation in `backend/docs/`](docs/).
 
 ## License
 

@@ -4,6 +4,7 @@
     "slug": "dashboard-app",
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
+    "scheme": "strctracker",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",

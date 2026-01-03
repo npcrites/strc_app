@@ -180,8 +180,14 @@ class PriceService:
                 existing = db.query(AssetPrice).filter(AssetPrice.symbol == symbol).first()
                 
                 if existing:
-                    existing.price = price
-                    existing.updated_at = now
+                    # Only update if price actually changed (avoids unnecessary timestamp updates)
+                    price_changed = float(existing.price) != float(price)
+                    if price_changed:
+                        existing.price = price
+                        existing.updated_at = now
+                        updated_count += 1
+                    # If price hasn't changed, don't update timestamp (shows we checked but no change)
+                    # This is especially useful after hours when prices don't change
                 else:
                     new_price = AssetPrice(
                         symbol=symbol,
@@ -189,8 +195,7 @@ class PriceService:
                         updated_at=now
                     )
                     db.add(new_price)
-                
-                updated_count += 1
+                    updated_count += 1
             
             db.commit()
             logger.info(f"Updated {updated_count} prices in cache")

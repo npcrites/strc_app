@@ -34,7 +34,7 @@ class TimeRange:
         Convert shorthand string to TimeRange.
         
         Args:
-            shorthand: One of "1M", "3M", "1Y", "ALL"
+            shorthand: One of "1W", "1M", "3M", "1Y", "ALL"
         
         Returns:
             TimeRange object
@@ -46,6 +46,7 @@ class TimeRange:
         now = datetime.utcnow()
         
         mapping = {
+            "1W": (now - timedelta(days=7), now, TimeGranularity.DAILY),
             "1M": (now - timedelta(days=30), now, TimeGranularity.DAILY),
             "3M": (now - timedelta(days=90), now, TimeGranularity.DAILY),
             "1Y": (now - timedelta(days=365), now, TimeGranularity.WEEKLY),
@@ -53,7 +54,7 @@ class TimeRange:
         }
         
         if shorthand not in mapping:
-            raise ValueError(f"Unknown shorthand: {shorthand}. Must be one of: 1M, 3M, 1Y, ALL")
+            raise ValueError(f"Unknown shorthand: {shorthand}. Must be one of: 1W, 1M, 3M, 1Y, ALL")
         
         start, end, granularity = mapping[shorthand]
         return TimeRange(start, end, granularity)

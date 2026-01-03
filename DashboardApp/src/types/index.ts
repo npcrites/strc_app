@@ -16,6 +16,7 @@ export interface LoginResponse {
 
 export interface DashboardSnapshot {
   as_of: string;
+  granularity: 'daily' | 'weekly' | 'monthly';
   total: {
     current: number;
     start: number;
@@ -36,7 +37,7 @@ export interface DashboardSnapshot {
     min: number;
   };
   allocation: Array<{
-    asset_type: string;
+    ticker: string;
     value: number;
     percent: number;
   }>;

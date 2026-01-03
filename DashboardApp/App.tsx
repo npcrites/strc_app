@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import BottomTabs from './src/navigation/BottomTabs';
 import LoginScreen from './src/screens/LoginScreen';
+import AssetDetailScreen from './src/screens/AssetDetailScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -40,13 +41,22 @@ function AppNavigator() {
         }}
       >
         {isAuthenticated ? (
-          <Stack.Screen 
-            name="Main" 
-            component={BottomTabs}
-            options={{
-              animation: 'fade',
-            }}
-          />
+          <>
+            <Stack.Screen 
+              name="Main" 
+              component={BottomTabs}
+              options={{
+                animation: 'fade',
+              }}
+            />
+            <Stack.Screen 
+              name="AssetDetail" 
+              component={AssetDetailScreen}
+              options={{
+                animation: 'slide_from_right',
+              }}
+            />
+          </>
         ) : (
           <Stack.Screen 
             name="Login" 

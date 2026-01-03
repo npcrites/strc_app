@@ -19,9 +19,18 @@ class Settings(BaseSettings):
     ALPACA_SECRET_KEY: str = ""
     ALPACA_BASE_URL: str = "https://paper-api.alpaca.markets"
     PRICE_UPDATE_ENABLED: bool = True
-    PRICE_UPDATE_INTERVAL_SECONDS: int = 10
+    PRICE_UPDATE_INTERVAL_SECONDS: int = 30
+    POSITION_SYNC_ENABLED: bool = True
+    POSITION_SYNC_INTERVAL_MINUTES: int = 5
     SNAPSHOT_ENABLED: bool = True
     SNAPSHOT_INTERVAL_MINUTES: int = 5
+    
+    # Alpaca OAuth Configuration
+    ALPACA_CLIENT_ID: str = ""
+    ALPACA_CLIENT_SECRET: str = ""
+    ALPACA_REDIRECT_URI: str = "http://localhost:8000/api/users/auth/alpaca/callback"
+    ALPACA_OAUTH_BASE_URL: str = "https://app.alpaca.markets"  # Paper trading OAuth
+    # For production: use "https://alpaca.markets"
     
     # Allowed tickers for trading
     ALLOWED_TICKERS: List[str] = ["STRC", "SATA"]

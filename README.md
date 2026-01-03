@@ -22,115 +22,44 @@ strc_tracker/
 
 ## Backend Setup
 
-### Prerequisites
+For detailed backend setup instructions, see **[backend/README.md](backend/README.md)**.
 
-- Python 3.11+
-- PostgreSQL
-- Plaid API credentials (optional, for bank integration)
+**Quick Overview:**
+1. Install dependencies: `pip install -r requirements.txt`
+2. Configure environment: Create `.env` file with database and API credentials
+3. Setup database: Run migrations with `alembic upgrade head`
+4. Start server: `./start_server.sh` or `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
 
-### Installation
-
-1. Navigate to the backend directory:
-```bash
-cd backend
-```
-
-2. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Set up environment variables:
-Create a `.env` file in the `backend` directory:
-```env
-DATABASE_URL=postgresql://user:password@localhost/strc_tracker
-SECRET_KEY=your-secret-key-here
-PLAID_CLIENT_ID=6952cecf168aa50020a8c16a
-PLAID_SECRET=108b8a7a5be3ab3913904e606b83c9
-PLAID_ENV=sandbox
-DEBUG=True
-```
-
-**Note**: The Plaid credentials above are for sandbox/testing. Never commit your `.env` file to version control!
-
-5. Set up the database:
-```bash
-# Initialize Alembic (if not already done)
-alembic init migrations
-
-# Create initial migration
-alembic revision --autogenerate -m "Initial migration"
-
-# Apply migrations
-alembic upgrade head
-```
-
-6. (Optional) Seed the database with sample data:
-```bash
-python ../scripts/seed_db.py
-```
-
-7. Run the server:
-```bash
-uvicorn app.main:app --reload
-```
-
-The API will be available at `http://localhost:8000`
-
-API documentation: `http://localhost:8000/docs`
+API documentation: `http://localhost:8000/docs` (when server is running)
 
 ## Mobile App Setup
 
-### Prerequisites
+For detailed mobile app setup instructions, see **[DashboardApp/README.md](DashboardApp/README.md)**.
 
-- Node.js 18+
-- Expo CLI
-- iOS Simulator (for Mac) or Android Emulator
+**Quick Overview:**
+1. Install dependencies: `npm install`
+2. Start Expo: `npm start`
+3. Run on iOS: `npm run ios` or press `i` in Expo terminal
+4. Run on Android: `npm run android` or press `a` in Expo terminal
 
-### Installation
+**Note:** Make sure the backend server is running before starting the mobile app.
 
-1. Navigate to the DashboardApp directory:
-```bash
-cd DashboardApp
-```
+## Documentation
 
-2. Install dependencies:
-```bash
-npm install
-```
+### Main Documentation
+- **[backend/README.md](backend/README.md)** - Backend setup, configuration, and development guide
+- **[DashboardApp/README.md](DashboardApp/README.md)** - Mobile app setup and troubleshooting
 
-3. Start the Expo development server:
-```bash
-npm start
-```
-
-4. Run on iOS:
-```bash
-npm run ios
-```
-
-5. Run on Android:
-```bash
-npm run android
-```
-
-**Note:** The mobile app has been migrated to `DashboardApp/` with TypeScript support, authentication, and dashboard service integration. See `DashboardApp/README.md` for details.
+### Backend Documentation
+See [backend/README.md#documentation](backend/README.md#documentation) for a complete list, including:
+- Backend structure and architecture
+- Database migrations and troubleshooting
+- Portfolio tracking implementation
+- Component-specific documentation (models, services, scripts)
 
 ## Docker
 
-### Build and run the backend with Docker:
-
-```bash
-cd backend
-docker build -t strc-tracker-backend .
-docker run -p 8000:8000 --env-file .env strc-tracker-backend
-```
+See **[backend/README.md#deployment](backend/README.md#deployment)** for Docker deployment instructions.
 
 ## API Endpoints
 

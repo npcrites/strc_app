@@ -7,8 +7,10 @@ export const Colors = {
   orangeLight: '#FFE5DD',
   green: '#4CAF50',
   greenLight: '#E8F5E9',
+  greenDark: '#2E8B57', // Green for gains/increases
   red: '#F44336',
   redLight: '#FFEBEE',
+  redDark: '#D20A2E', // Red for losses/decreases
   
   // Text colors
   textPrimary: '#000000',

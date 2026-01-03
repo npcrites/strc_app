@@ -16,7 +16,7 @@ import { formatCurrency, formatDate } from '../utils/formatters';
 import { Colors } from '../constants/colors';
 
 export default function ActivityScreen() {
-  const { token, loading: authLoading } = useAuth();
+  const { token, loading: authLoading, logout } = useAuth();
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<DashboardSnapshot | null>(null);
@@ -167,7 +167,12 @@ export default function ActivityScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) + 80 }}
       >
         <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) + 20 }]}>
-          <Text style={styles.headerTitle}>Activity</Text>
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>Activity</Text>
+            <TouchableOpacity onPress={logout} style={styles.logoutButton}>
+              <Text style={styles.logoutButtonText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
       {/* UPCOMING Section */}
@@ -308,9 +313,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 16,
   },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
+    color: Colors.textPrimary,
+  },
+  logoutButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: Colors.backgroundGrey,
+  },
+  logoutButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: Colors.textPrimary,
   },
   section: {
