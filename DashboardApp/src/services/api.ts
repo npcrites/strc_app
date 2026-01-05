@@ -59,8 +59,17 @@ class ApiService {
       if (__DEV__) {
         console.log('🧪 Testing API URL connectivity...');
         const healthUrl = `${this.baseUrl.replace('/api', '')}/health`;
-        fetch(healthUrl)
+        
+        // Create an AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        
+        fetch(healthUrl, { 
+          signal: controller.signal,
+          method: 'GET',
+        })
           .then(res => {
+            clearTimeout(timeoutId);
             if (res.ok) {
               return res.json();
             }
@@ -70,19 +79,40 @@ class ApiService {
             console.log('✅ Backend health check successful:', data);
             // Also test login endpoint (OPTIONS preflight)
             console.log('🧪 Testing login endpoint preflight...');
+            const preflightController = new AbortController();
+            const preflightTimeout = setTimeout(() => preflightController.abort(), 5000);
             return fetch(`${this.baseUrl}/users/login`, {
               method: 'OPTIONS',
+              signal: preflightController.signal,
             }).then(res => {
+              clearTimeout(preflightTimeout);
               console.log('✅ Login endpoint preflight status:', res.status);
               return res;
             }).catch(err => {
-              console.warn('⚠️ Login endpoint preflight test failed (may be normal):', err.message);
+              clearTimeout(preflightTimeout);
+              if (err.name === 'AbortError') {
+                console.warn('⚠️ Login endpoint preflight timed out (may be normal)');
+              } else {
+                console.warn('⚠️ Login endpoint preflight test failed (may be normal):', err.message);
+              }
             });
           })
           .catch(err => {
-            console.error('❌ Backend health check failed:', err.message);
-            console.error('   Tried URL:', healthUrl);
-            console.error('   Make sure backend is running: cd backend && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000');
+            clearTimeout(timeoutId);
+            if (err.name === 'AbortError') {
+              console.error('❌ Backend health check timed out after 5 seconds');
+              console.error('   This usually means the device cannot reach the server');
+              console.error('   Tried URL:', healthUrl);
+              console.error('   Check:');
+              console.error('   1. Both devices are on the same WiFi network');
+              console.error('   2. Server is running: cd backend && ./start_server.sh');
+              console.error('   3. Firewall allows connections on port 8000');
+              console.error('   4. IP address is correct (current: 192.168.1.152)');
+            } else {
+              console.error('❌ Backend health check failed:', err.message);
+              console.error('   Tried URL:', healthUrl);
+              console.error('   Make sure backend is running: cd backend && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000');
+            }
           });
       }
     } else {

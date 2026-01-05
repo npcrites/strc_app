@@ -38,11 +38,15 @@ class Settings(BaseSettings):
     # CORS (comma-separated string, will be split)
     # Includes Expo default ports: 19000 (Metro), 19006 (Expo Go), 8081 (Metro alternative)
     # Also includes common Expo Go URLs for physical devices
+    # For development, use "*" to allow all origins (set in .env: CORS_ORIGINS=*)
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:19006,http://localhost:19000,http://localhost:8081,exp://localhost:8081,exp://192.168.1.107:8081"
     
     @property
     def cors_origins_list(self) -> List[str]:
         """Convert CORS_ORIGINS string to list"""
+        # Allow all origins if "*" is specified (useful for development)
+        if self.CORS_ORIGINS.strip() == "*":
+            return ["*"]
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
     
     # App

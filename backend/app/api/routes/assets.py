@@ -207,13 +207,13 @@ async def get_asset_price_history(
         # Get all snapshots
         snapshots = query.all()
         
-        # Check if we have meaningful price variation
-        price_values = [float(snap.price_per_share) for snap in snapshots if snap.price_per_share is not None]
-        has_price_variation = len(set(price_values)) > 1 if price_values else False
+        logger.info(f"Found {len(snapshots)} snapshots for {ticker_upper} in time range {time_range}")
         
-        # If no snapshots or no price variation, try fetching historical data from Alpaca
-        if not snapshots or not has_price_variation:
-            logger.info(f"No price variation in snapshots for {ticker_upper}, fetching historical data from Alpaca")
+        # Only fetch from Alpaca if we have NO snapshots at all
+        # Always use position snapshots when available, even if price hasn't varied
+        # This preserves the 5-minute snapshot data that users expect
+        if not snapshots:
+            logger.info(f"No snapshots found for {ticker_upper}, fetching historical data from Alpaca")
             historical_series = _fetch_historical_prices_from_alpaca(
                 ticker_upper, 
                 tr.start_date, 
@@ -229,8 +229,8 @@ async def get_asset_price_history(
                     series=historical_series
                 )
         
+        # If we still have no snapshots after Alpaca fallback, return empty
         if not snapshots:
-            # Return empty series if no data
             return AssetPriceHistory(
                 ticker=ticker_upper,
                 current_price=current_price,
@@ -241,31 +241,14 @@ async def get_asset_price_history(
         # Determine granularity (same logic as dashboard)
         granularity = tr.granularity
         
-        # For very short ranges (< 1 day), return all snapshots without bucketing
-        if tr.start_date and tr.end_date:
-            time_diff = (tr.end_date - tr.start_date).total_seconds()
-            if time_diff < 86400:  # Less than 1 day
-                # Return all snapshots
-                series = [
-                    PricePoint(
-                        timestamp=snap.timestamp,
-                        price=float(snap.price_per_share),
-                        value=float(snap.current_value) if snap.current_value else None
-                    )
-                    for snap in snapshots
-                ]
-                return AssetPriceHistory(
-                    ticker=ticker_upper,
-                    current_price=current_price,
-                    granularity=granularity.value,
-                    series=series
-                )
+        # For asset charts, we want to preserve 5-minute snapshot granularity
+        # Only bucket if we have an extremely large number of snapshots (>10,000)
+        # This preserves the 5-minute granularity that users expect to see
+        MAX_SNAPSHOTS_BEFORE_BUCKETING = 10000
         
-        # Bucket snapshots by granularity
-        MIN_SNAPSHOTS_FOR_BUCKETING = 20
-        
-        if len(snapshots) < MIN_SNAPSHOTS_FOR_BUCKETING:
-            # Return all snapshots if below threshold
+        if len(snapshots) < MAX_SNAPSHOTS_BEFORE_BUCKETING:
+            # Return all snapshots - preserve 5-minute granularity
+            logger.info(f"Returning all {len(snapshots)} snapshots for {ticker_upper} (preserving 5-minute granularity)")
             series = [
                 PricePoint(
                     timestamp=snap.timestamp,
@@ -275,10 +258,13 @@ async def get_asset_price_history(
                 for snap in snapshots
             ]
         else:
-            # Bucket by granularity
+            # Only bucket if we have an extremely large dataset (>10k snapshots)
+            # Use hourly bucketing instead of daily to preserve more granularity
+            logger.info(f"Bucketing {len(snapshots)} snapshots for {ticker_upper} (using hourly buckets)")
             bucketed = {}
             for snap in snapshots:
-                bucket_key = _get_bucket_key(snap.timestamp, granularity)
+                # Bucket by hour instead of day to preserve more granularity
+                bucket_key = snap.timestamp.replace(minute=0, second=0, microsecond=0)
                 # Keep the latest snapshot in each bucket
                 if bucket_key not in bucketed or snap.timestamp > bucketed[bucket_key].timestamp:
                     bucketed[bucket_key] = snap
@@ -292,6 +278,7 @@ async def get_asset_price_history(
                 )
                 for snap in sorted(bucketed.values(), key=lambda x: x.timestamp)
             ]
+            logger.info(f"After bucketing: {len(series)} data points")
         
         # Add current price as the latest point if we have it
         if current_price and series:
