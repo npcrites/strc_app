@@ -5,6 +5,7 @@
  */
 
 type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
+type TradingHoursMode = 'market' | 'extended';
 
 interface PricePoint {
   timestamp: string;
@@ -47,10 +48,10 @@ class ChartDataCache {
   private readonly MAX_CACHE_SIZE = 50;
 
   /**
-   * Generate cache key from ticker and time range
+   * Generate cache key from ticker, time range, and trading hours mode
    */
-  private getCacheKey(ticker: string, timeRange: TimeRange): string {
-    return `${ticker.toUpperCase()}:${timeRange}`;
+  private getCacheKey(ticker: string, timeRange: TimeRange, tradingHoursMode: TradingHoursMode = 'market'): string {
+    return `${ticker.toUpperCase()}:${timeRange}:${tradingHoursMode}`;
   }
 
   /**
@@ -63,8 +64,8 @@ class ChartDataCache {
   /**
    * Get cached data if available and valid
    */
-  get(ticker: string, timeRange: TimeRange): AssetPriceHistory | null {
-    const key = this.getCacheKey(ticker, timeRange);
+  get(ticker: string, timeRange: TimeRange, tradingHoursMode: TradingHoursMode = 'market'): AssetPriceHistory | null {
+    const key = this.getCacheKey(ticker, timeRange, tradingHoursMode);
     const entry = this.cache.get(key);
     
     if (!entry) {
@@ -83,8 +84,8 @@ class ChartDataCache {
   /**
    * Store data in cache
    */
-  set(ticker: string, timeRange: TimeRange, data: AssetPriceHistory): void {
-    const key = this.getCacheKey(ticker, timeRange);
+  set(ticker: string, timeRange: TimeRange, data: AssetPriceHistory, tradingHoursMode: TradingHoursMode = 'market'): void {
+    const key = this.getCacheKey(ticker, timeRange, tradingHoursMode);
     const ttl = this.CACHE_TTL[timeRange];
     
     const entry: CacheEntry = {
@@ -123,10 +124,16 @@ class ChartDataCache {
   /**
    * Invalidate cache entry for a specific ticker and time range
    */
-  invalidate(ticker: string, timeRange?: TimeRange): void {
+  invalidate(ticker: string, timeRange?: TimeRange, tradingHoursMode?: TradingHoursMode): void {
     if (timeRange) {
-      const key = this.getCacheKey(ticker, timeRange);
-      this.cache.delete(key);
+      if (tradingHoursMode) {
+        const key = this.getCacheKey(ticker, timeRange, tradingHoursMode);
+        this.cache.delete(key);
+      } else {
+        // Invalidate both market and extended modes for this time range
+        this.cache.delete(this.getCacheKey(ticker, timeRange, 'market'));
+        this.cache.delete(this.getCacheKey(ticker, timeRange, 'extended'));
+      }
     } else {
       // Invalidate all time ranges for this ticker
       const tickerUpper = ticker.toUpperCase();
@@ -169,9 +176,10 @@ class ChartDataCache {
   registerPendingRequest(
     ticker: string,
     timeRange: TimeRange,
-    promise: Promise<AssetPriceHistory>
+    promise: Promise<AssetPriceHistory>,
+    tradingHoursMode: TradingHoursMode = 'market'
   ): Promise<AssetPriceHistory> {
-    const key = this.getCacheKey(ticker, timeRange);
+    const key = this.getCacheKey(ticker, timeRange, tradingHoursMode);
     
     // Check if there's already a pending request
     const existing = this.pendingRequests.get(key);
@@ -205,8 +213,8 @@ class ChartDataCache {
   /**
    * Check if there's a pending request for this key
    */
-  hasPendingRequest(ticker: string, timeRange: TimeRange): boolean {
-    const key = this.getCacheKey(ticker, timeRange);
+  hasPendingRequest(ticker: string, timeRange: TimeRange, tradingHoursMode: TradingHoursMode = 'market'): boolean {
+    const key = this.getCacheKey(ticker, timeRange, tradingHoursMode);
     const pending = this.pendingRequests.get(key);
     
     if (!pending) {

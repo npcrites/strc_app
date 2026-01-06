@@ -49,16 +49,13 @@ export async function fetchAssetPriceHistory(
 
   // Register pending request to prevent duplicate calls
   // This will return the existing promise if one is already pending
-  const promise = chartDataCache.registerPendingRequest(ticker, timeRange, fetchPromise);
+  const promise = chartDataCache.registerPendingRequest(ticker, timeRange, fetchPromise, tradingHoursMode);
 
   try {
     const data = await promise;
     
-    // Don't cache data when mode is 'extended' to avoid cache conflicts
-    // Only cache market mode data
-    if (tradingHoursMode === 'market') {
-      chartDataCache.set(ticker, timeRange, data);
-    }
+    // Cache data with tradingHoursMode in the key to differentiate between modes
+    chartDataCache.set(ticker, timeRange, data, tradingHoursMode);
     
     console.log(`✅ [ChartData] Fetched ${ticker} (${timeRange}, mode: ${tradingHoursMode}) - ${data.series.length} points`);
     

@@ -243,8 +243,9 @@ class MarketHoursService:
         Returns:
             Tuple of (adjusted_start_date, adjusted_end_date)
         """
-        if start_date is None:
-            # For "ALL", keep as None
+        # For "ALL" time range, keep start_date as None
+        # But for other time ranges, calculate start_date based on shorthand even if original is None
+        if time_range_shorthand == "ALL":
             return None, end_date
         
         # If end_date is not a trading day, find the most recent trading day

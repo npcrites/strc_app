@@ -4,7 +4,7 @@ Assets API endpoints for price history
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, date
 from pydantic import BaseModel
 
 from app.db.session import get_db
@@ -20,6 +20,7 @@ from app.core.config import settings
 from sqlalchemy import and_, func
 import httpx
 import logging
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ class AssetPriceHistory(BaseModel):
 
 def _normalize_snapshots_per_day(
     snapshots: List,
-    target_per_day: int
+    target_per_day: int,
+    market_hours_service: Optional[MarketHoursService] = None
 ) -> List:
     """
     Normalize snapshots to have the same number of data points per day.
@@ -51,9 +53,13 @@ def _normalize_snapshots_per_day(
     Buckets snapshots within each day and selects evenly distributed points.
     This ensures consistency between market hours and extended hours views.
     
+    Uses ET dates to match the filtering logic, ensuring weekends/holidays
+    are correctly excluded in market hours mode.
+    
     Args:
         snapshots: List of snapshot tuples (timestamp, price_per_share, current_value)
         target_per_day: Target number of snapshots per day
+        market_hours_service: MarketHoursService instance (optional, for ET date conversion)
         
     Returns:
         List of normalized snapshots with consistent points per day
@@ -61,11 +67,20 @@ def _normalize_snapshots_per_day(
     if not snapshots:
         return snapshots
     
-    # Group snapshots by date
+    # Create MarketHoursService if not provided
+    if market_hours_service is None:
+        market_hours_service = MarketHoursService()
+    
+    # Group snapshots by date (use ET date to match filtering logic)
     snapshots_by_date = {}
     for snap in snapshots:
         snap_timestamp = snap[0]
-        snap_date = snap_timestamp.date() if isinstance(snap_timestamp, datetime) else snap_timestamp
+        # Convert to ET date to match the filtering logic
+        # This ensures that snapshots are grouped by their ET date, not UTC date
+        if isinstance(snap_timestamp, datetime):
+            snap_date = market_hours_service._to_et(snap_timestamp).date()
+        else:
+            snap_date = snap_timestamp
         
         if snap_date not in snapshots_by_date:
             snapshots_by_date[snap_date] = []
@@ -73,27 +88,128 @@ def _normalize_snapshots_per_day(
     
     normalized = []
     for date, day_snapshots in sorted(snapshots_by_date.items()):
-        if len(day_snapshots) <= target_per_day:
-            # Already has fewer or equal points, keep all
-            normalized.extend(day_snapshots)
+        # Sort by time
+        day_snapshots.sort(key=lambda x: x[0])
+        
+        # For market hours mode, prefer snapshots during market hours (9:30 AM - 4:00 PM ET)
+        # but include all snapshots if needed to reach target_per_day
+        market_hours_snapshots = []
+        other_snapshots = []
+        for snap in day_snapshots:
+            if market_hours_service.is_market_open(snap[0]):
+                market_hours_snapshots.append(snap)
+            else:
+                other_snapshots.append(snap)
+        
+        # Prefer market hours snapshots, but use others if needed
+        preferred_snapshots = market_hours_snapshots if market_hours_snapshots else other_snapshots
+        
+        if len(preferred_snapshots) == target_per_day:
+            # Already has exactly target points, keep all
+            normalized.extend(preferred_snapshots)
+        elif len(preferred_snapshots) < target_per_day:
+            # Has fewer points - duplicate to reach target_per_day
+            # This ensures all days have the same number of points
+            if len(preferred_snapshots) == 0:
+                # No snapshots for this day - skip (shouldn't happen, but handle gracefully)
+                continue
+            elif len(preferred_snapshots) == 1:
+                # Only one snapshot - duplicate it target_per_day times
+                single_snapshot = preferred_snapshots[0]
+                for _ in range(target_per_day):
+                    normalized.append(single_snapshot)
+            else:
+                # Multiple snapshots but fewer than target - distribute evenly
+                # We'll duplicate snapshots to fill gaps
+                step = len(preferred_snapshots) / target_per_day
+                for i in range(target_per_day):
+                    index = int(i * step)
+                    index = min(index, len(preferred_snapshots) - 1)
+                    normalized.append(preferred_snapshots[index])
         else:
-            # Bucket to target_per_day points
-            # Sort by time and select evenly distributed points
-            day_snapshots.sort(key=lambda x: x[0])
-            step = len(day_snapshots) / target_per_day
+            # Has more points - downsample to target_per_day
+            # Prefer market hours snapshots when downsampling
+            step = len(preferred_snapshots) / target_per_day
             for i in range(target_per_day):
                 index = int(i * step)
-                normalized.append(day_snapshots[index])
+                # Ensure index doesn't exceed array bounds
+                index = min(index, len(preferred_snapshots) - 1)
+                normalized.append(preferred_snapshots[index])
     
     normalized.sort(key=lambda x: x[0])
     return normalized
+
+
+def _get_previous_trading_day_closing_price(
+    snapshots_by_date: dict,
+    target_date: date,
+    market_hours_service: MarketHoursService
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    Find the closing price from the most recent trading day before target_date.
+    
+    Returns the snapshot closest to market close (4:00 PM ET) from the previous trading day.
+    This ensures holidays and weekends use the actual closing price, not just any snapshot.
+    
+    Args:
+        snapshots_by_date: Dictionary mapping dates to lists of snapshots
+        target_date: Date to find previous trading day for
+        market_hours_service: MarketHoursService instance
+        
+    Returns:
+        Tuple of (price_per_share, current_value) or (None, None) if not found
+    """
+    # Go back day by day to find the most recent trading day
+    check_date = target_date - timedelta(days=1)
+    max_days_back = 10  # Safety limit (shouldn't need more than 3-4 days for weekends/holidays)
+    days_back = 0
+    
+    while days_back < max_days_back:
+        if market_hours_service.is_trading_day(check_date):
+            # Found a trading day - get its closing price
+            if check_date in snapshots_by_date:
+                day_snapshots = snapshots_by_date[check_date]
+                if day_snapshots:
+                    # Find snapshot closest to market close (4:00 PM ET)
+                    # Market close is 4:00 PM ET = 8:00 PM UTC (during EST) or 9:00 PM UTC (during EDT)
+                    market_close_et = market_hours_service.ET_TIMEZONE.localize(
+                        datetime.combine(check_date, time(
+                            market_hours_service.MARKET_CLOSE_HOUR,
+                            market_hours_service.MARKET_CLOSE_MINUTE
+                        ))
+                    )
+                    market_close_utc = market_close_et.astimezone(pytz.utc).replace(tzinfo=None)
+                    
+                    # Find snapshot closest to (but not after) market close
+                    closing_snapshot = None
+                    min_time_diff = timedelta.max
+                    
+                    for snap in day_snapshots:
+                        snap_time = snap[0]
+                        if snap_time <= market_close_utc:
+                            time_diff = market_close_utc - snap_time
+                            if time_diff < min_time_diff:
+                                min_time_diff = time_diff
+                                closing_snapshot = snap
+                    
+                    # If no snapshot before market close, use the latest snapshot of the day
+                    if closing_snapshot is None:
+                        closing_snapshot = max(day_snapshots, key=lambda x: x[0])
+                    
+                    return closing_snapshot[1], closing_snapshot[2]  # price, value
+        
+        check_date -= timedelta(days=1)
+        days_back += 1
+    
+    return None, None
 
 
 def _fill_missing_days_for_extended_hours(
     snapshots: List,
     start_date: Optional[datetime],
     end_date: datetime,
-    target_snapshots_per_day: int = 24
+    target_snapshots_per_day: int = 24,
+    market_hours_service: Optional[MarketHoursService] = None
 ) -> List:
     """
     Fill in missing calendar days for extended hours mode.
@@ -102,11 +218,15 @@ def _fill_missing_days_for_extended_hours(
     data points per day as trading days, ensuring consistency between
     market hours and extended hours views.
     
+    For holidays and weekends, uses the previous trading day's closing price
+    (4:00 PM ET) instead of just the latest snapshot.
+    
     Args:
         snapshots: List of snapshot tuples/rows (timestamp, price_per_share, current_value)
         start_date: Start of time range (None for ALL)
         end_date: End of time range
         target_snapshots_per_day: Number of synthetic snapshots to create per missing day
+        market_hours_service: MarketHoursService instance (optional, created if not provided)
         
     Returns:
         List of snapshots with missing days filled in (as tuples)
@@ -117,6 +237,10 @@ def _fill_missing_days_for_extended_hours(
     if start_date is None:
         # For "ALL", don't fill - just return original snapshots
         return snapshots
+    
+    # Create MarketHoursService if not provided
+    if market_hours_service is None:
+        market_hours_service = MarketHoursService()
     
     # Create a set of dates that have snapshots and group by date
     dates_with_snapshots = set()
@@ -163,7 +287,12 @@ def _fill_missing_days_for_extended_hours(
     last_known_price = None
     last_known_value = None
     
+    # Track which dates we're processing for debugging
+    processed_dates = []
+    missing_dates = []
+    
     while current_date <= end_date_obj:
+        processed_dates.append(current_date)
         if current_date in dates_with_snapshots:
             # This day has snapshots - update last known price/value
             day_snapshots = snapshots_by_date[current_date]
@@ -174,9 +303,23 @@ def _fill_missing_days_for_extended_hours(
                 last_known_value = latest_snapshot[2]
         else:
             # This day has no snapshots - create synthetic snapshots throughout the day
-            # Use forward fill: use the last known price from previous days
-            fill_price = last_known_price if last_known_price is not None else first_snapshot[1]
-            fill_value = last_known_value if last_known_value is not None else first_snapshot[2]
+            # For holidays and weekends, use the previous trading day's closing price
+            missing_dates.append(current_date)
+            
+            # Try to get closing price from previous trading day
+            closing_price, closing_value = _get_previous_trading_day_closing_price(
+                snapshots_by_date,
+                current_date,
+                market_hours_service
+            )
+            
+            # Use closing price if available, otherwise fall back to last known price
+            fill_price = closing_price if closing_price is not None else (
+                last_known_price if last_known_price is not None else first_snapshot[1]
+            )
+            fill_value = closing_value if closing_value is not None else (
+                last_known_value if last_known_value is not None else first_snapshot[2]
+            )
             
             if fill_price is not None:
                 # Create actual_target synthetic snapshots evenly distributed throughout the day
@@ -213,8 +356,22 @@ def _fill_missing_days_for_extended_hours(
     synthetic_count = len(filled_snapshots) - len(snapshots)
     if synthetic_count > 0:
         logger.info(
-            f"Fill function: Created {synthetic_count} synthetic snapshots for missing days "
+            f"Fill function: Created {synthetic_count} synthetic snapshots for {len(missing_dates)} missing days "
             f"({actual_target} per missing day). Total: {len(filled_snapshots)} snapshots"
+        )
+        # Log sample of missing dates that were filled (first 10)
+        if missing_dates:
+            sample_missing = sorted(missing_dates)[:10]
+            logger.info(f"Sample missing dates that were filled: {[str(d) for d in sample_missing]}")
+    
+    # Verify all dates in range are represented
+    filled_dates = set(s[0].date() if isinstance(s[0], datetime) else s[0] for s in filled_snapshots)
+    expected_dates = set(processed_dates)
+    missing_in_filled = expected_dates - filled_dates
+    if missing_in_filled:
+        logger.warning(
+            f"Fill function: Some dates in range are still missing after filling: "
+            f"{sorted(missing_in_filled)[:10]}"
         )
     
     return filled_snapshots
@@ -361,17 +518,53 @@ async def get_asset_price_history(
         market_hours_service = MarketHoursService()
         if trading_hours_mode == "market":
             # Market hours mode: use trading days (1W = 5 trading days)
+            # IMPORTANT: Pass the time_range shorthand so it can calculate correctly
+            # even if tr.start_date is set from TimeRange.from_shorthand
             adjusted_start, adjusted_end = market_hours_service.adjust_time_range_for_trading_days(
-                tr.start_date,
+                tr.start_date,  # May be set from TimeRange.from_shorthand, but will be recalculated
                 tr.end_date,
-                time_range
+                time_range  # Pass the shorthand to ensure correct calculation
             )
             tr.start_date = adjusted_start
             tr.end_date = adjusted_end
             logger.info(
-                f"Adjusted time range for market hours: "
+                f"Adjusted time range for market hours ({time_range}): "
                 f"start={tr.start_date}, end={tr.end_date}"
             )
+            
+            # Verify the calculation worked correctly
+            if tr.start_date:
+                days_span = (tr.end_date.date() - tr.start_date.date()).days
+                expected_days = {
+                    "1W": 5,
+                    "1M": 20,
+                    "3M": 60,
+                    "1Y": 252
+                }.get(time_range, None)
+                if expected_days:
+                    logger.info(
+                        f"Market hours {time_range}: {days_span} calendar days "
+                        f"(expected ~{expected_days} trading days, ~{int(expected_days * 1.4)} calendar days)"
+                    )
+                    
+                    # Additional verification for 3M
+                    if time_range == "3M":
+                        # Compare with 1M to ensure they're different
+                        tr_1m = TimeRange.from_shorthand("1M")
+                        adjusted_start_1m, adjusted_end_1m = market_hours_service.adjust_time_range_for_trading_days(
+                            tr_1m.start_date, tr_1m.end_date, "1M"
+                        )
+                        if adjusted_start_1m and tr.start_date:
+                            days_diff = (tr.start_date.date() - adjusted_start_1m.date()).days
+                            logger.info(
+                                f"3M vs 1M comparison: 3M starts {days_diff} days before 1M "
+                                f"(3M: {tr.start_date.date()}, 1M: {adjusted_start_1m.date()})"
+                            )
+                            if days_diff < 30:
+                                logger.warning(
+                                    f"WARNING: 3M start date is only {days_diff} days before 1M. "
+                                    f"This suggests the calculation may be incorrect."
+                                )
         elif trading_hours_mode == "extended":
             # Extended hours mode: use calendar days instead of trading days
             # This ensures we include weekends, holidays, and all hours (not just market hours)
@@ -416,6 +609,11 @@ async def get_asset_price_history(
         )
         
         # Apply time range filter (all timestamps in UTC)
+        logger.info(
+            f"About to apply time range filter: "
+            f"start_date={tr.start_date}, end_date={tr.end_date}, "
+            f"time_range={time_range}, trading_hours_mode={trading_hours_mode}"
+        )
         if tr.start_date:
             query = query.filter(PortfolioSnapshot.timestamp >= tr.start_date)
         query = query.filter(PortfolioSnapshot.timestamp <= tr.end_date)
@@ -427,10 +625,38 @@ async def get_asset_price_history(
         snapshots = query.all()
         
         logger.info(
-            f"Time range filter for {ticker_upper}: "
+            f"Time range filter for {ticker_upper} ({time_range}, {trading_hours_mode}): "
             f"start={tr.start_date}, end={tr.end_date}, "
             f"found {len(snapshots)} snapshots"
         )
+        
+        # Log the actual date range for debugging
+        if snapshots:
+            first_timestamp = snapshots[0][0]
+            last_timestamp = snapshots[-1][0]
+            logger.info(
+                f"Snapshot date range: {first_timestamp.date()} to {last_timestamp.date()}, "
+                f"span: {(last_timestamp.date() - first_timestamp.date()).days} calendar days"
+            )
+            # Check if the first snapshot matches the expected start date
+            if tr.start_date:
+                expected_start = tr.start_date.date()
+                actual_start = first_timestamp.date()
+                if actual_start > expected_start:
+                    logger.warning(
+                        f"WARNING: First snapshot date ({actual_start}) is AFTER expected start date ({expected_start}). "
+                        f"This suggests there's no data before {actual_start} in the database."
+                    )
+                elif actual_start < expected_start:
+                    logger.warning(
+                        f"WARNING: First snapshot date ({actual_start}) is BEFORE expected start date ({expected_start}). "
+                        f"Query filter may not be working correctly."
+                    )
+        else:
+            logger.warning(
+                f"WARNING: No snapshots found for {ticker_upper} in time range "
+                f"{tr.start_date.date() if tr.start_date else 'ALL'} to {tr.end_date.date()}"
+            )
         
         # Log first and last snapshot timestamps for debugging
         if snapshots:
@@ -489,35 +715,110 @@ async def get_asset_price_history(
             # Filter to market hours only if market hours mode
             if trading_hours_mode == "market":
                 market_hours_service = MarketHoursService()
-                # Filter to only trading days during market hours
-                # This ensures we exclude weekends, holidays, and after-hours data
+                # Filter to only trading days (not just market hours)
+                # Snapshots may be stored at any time (e.g., 4:00 AM UTC = midnight ET),
+                # but we want to include all snapshots from trading days
+                # The frontend will handle displaying only market hours when dragging
                 # Snapshots are tuples: (timestamp, price_per_share, current_value)
-                filtered_snapshots = [
-                    snap for snap in snapshots
-                    if market_hours_service.is_market_open(snap[0])
-                ]
+                filtered_snapshots = []
+                excluded_snapshots = []
+                for snap in snapshots:
+                    snap_et = market_hours_service._to_et(snap[0])
+                    snap_et_date = snap_et.date()
+                    is_trading_day = market_hours_service.is_trading_day(snap_et_date)
+                    if is_trading_day:
+                        filtered_snapshots.append(snap)
+                    else:
+                        # Track excluded snapshots for debugging
+                        excluded_snapshots.append((snap_et_date, snap_et, snap[0]))
+                
+                if excluded_snapshots:
+                    # Log sample of excluded snapshots
+                    sample_excluded = excluded_snapshots[:10]
+                    logger.info(
+                        f"Excluded {len(excluded_snapshots)} non-trading-day snapshots for {ticker_upper}. "
+                        f"Sample: {[(d.strftime('%Y-%m-%d'), et.strftime('%Y-%m-%d %H:%M ET')) for d, et, _ in sample_excluded]}"
+                    )
+                
                 logger.info(
-                    f"Filtered to {len(filtered_snapshots)} market hours snapshots "
+                    f"Filtered to {len(filtered_snapshots)} trading day snapshots "
                     f"(from {len(snapshots)} total) for {ticker_upper}"
                 )
                 snapshots = filtered_snapshots
                 
                 # Normalize to consistent points per day for market hours
-                snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY)
+                # This will prefer market hours snapshots when available, but include all trading day snapshots
+                # to ensure we have data for all days in the range
+                snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY, market_hours_service)
+                
+                # Group by date to filter intelligently
+                from collections import defaultdict
+                snapshots_by_date_after_norm = defaultdict(list)
+                for snap in snapshots:
+                    snap_et = market_hours_service._to_et(snap[0])
+                    snap_et_date = snap_et.date()
+                    snapshots_by_date_after_norm[snap_et_date].append(snap)
+                
+                # For each day, prefer market hours snapshots, but keep all if no market hours available
+                # This ensures we have data for all trading days while preferring market hours timestamps
+                final_snapshots = []
+                for date, day_snapshots in sorted(snapshots_by_date_after_norm.items()):
+                    # Separate market hours from non-market hours
+                    market_hours_snaps = [s for s in day_snapshots if market_hours_service.is_market_open(s[0])]
+                    non_market_hours_snaps = [s for s in day_snapshots if not market_hours_service.is_market_open(s[0])]
+                    
+                    # Prefer market hours snapshots, but use all if no market hours available
+                    if market_hours_snaps:
+                        # Use only market hours snapshots for this day
+                        final_snapshots.extend(market_hours_snaps)
+                        if non_market_hours_snaps:
+                            logger.debug(
+                                f"Day {date}: Using {len(market_hours_snaps)} market hours snapshots, "
+                                f"excluding {len(non_market_hours_snaps)} non-market-hours snapshots"
+                            )
+                    else:
+                        # No market hours snapshots available - use all snapshots for this day
+                        # This ensures we don't lose days that only have pre-market/after-hours data
+                        final_snapshots.extend(day_snapshots)
+                        logger.debug(
+                            f"Day {date}: No market hours snapshots, using {len(day_snapshots)} total snapshots"
+                        )
+                
+                snapshots = sorted(final_snapshots, key=lambda x: x[0])
+                
+                # Final verification: ensure all snapshots are from trading days
+                verified_snapshots = []
+                non_trading_after_norm = []
+                for snap in snapshots:
+                    snap_et = market_hours_service._to_et(snap[0])
+                    snap_et_date = snap_et.date()
+                    if market_hours_service.is_trading_day(snap_et_date):
+                        verified_snapshots.append(snap)
+                    else:
+                        non_trading_after_norm.append((snap_et_date, snap_et))
+                
+                if non_trading_after_norm:
+                    logger.warning(
+                        f"Found {len(non_trading_after_norm)} non-trading-day snapshots after normalization for {ticker_upper}. "
+                        f"Removing them. Sample: {[(d.strftime('%Y-%m-%d'), et.strftime('%H:%M ET')) for d, et in non_trading_after_norm[:10]]}"
+                    )
+                    snapshots = verified_snapshots
+                
                 logger.info(
                     f"Normalized market hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
                     f"{len(snapshots)} total snapshots"
                 )
             elif trading_hours_mode == "extended":
-                # For extended hours mode, fill in missing calendar days with last known price
-                # This ensures holidays and weekends show on the chart with the last known price
+                # For extended hours mode, fill in missing calendar days with previous trading day's closing price
+                # This ensures holidays and weekends show on the chart with the actual closing price
                 from datetime import timedelta
+                market_hours_service = MarketHoursService()
                 logger.info(
                     f"Extended hours mode: starting with {len(snapshots)} snapshots, "
                     f"time range: {tr.start_date.date() if tr.start_date else None} to {tr.end_date.date()}"
                 )
                 filled_snapshots = _fill_missing_days_for_extended_hours(
-                    snapshots, tr.start_date, tr.end_date, TARGET_POINTS_PER_DAY
+                    snapshots, tr.start_date, tr.end_date, TARGET_POINTS_PER_DAY, market_hours_service
                 )
                 logger.info(
                     f"Extended hours mode: filled missing days - "
@@ -526,7 +827,7 @@ async def get_asset_price_history(
                 snapshots = filled_snapshots
                 
                 # Normalize to consistent points per day for extended hours
-                snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY)
+                snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY, market_hours_service)
                 logger.info(
                     f"Normalized extended hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
                     f"{len(snapshots)} total snapshots"
@@ -567,14 +868,18 @@ async def get_asset_price_history(
             # For extended hours mode, return ALL bucketed snapshots (including weekends, holidays, after-hours)
             if trading_hours_mode == "market":
                 market_hours_service = MarketHoursService()
+                # Filter to only trading days (not just market hours)
+                # This matches the non-bucketed path for consistency
                 bucketed_list = [
                     snap for snap in bucketed_list
-                    if market_hours_service.is_market_open(snap[0])
+                    if market_hours_service.is_trading_day(
+                        market_hours_service._to_et(snap[0]).date()
+                    )
                 ]
-                logger.info(f"Filtered bucketed data to {len(bucketed_list)} market hours snapshots")
+                logger.info(f"Filtered bucketed data to {len(bucketed_list)} trading day snapshots")
                 
                 # Normalize to consistent points per day for market hours
-                bucketed_list = _normalize_snapshots_per_day(bucketed_list, TARGET_POINTS_PER_DAY)
+                bucketed_list = _normalize_snapshots_per_day(bucketed_list, TARGET_POINTS_PER_DAY, market_hours_service)
                 logger.info(
                     f"Normalized bucketed market hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
                     f"{len(bucketed_list)} total snapshots"
@@ -588,10 +893,11 @@ async def get_asset_price_history(
                 
                 # For extended hours with large datasets, we still need to fill missing days
                 # and normalize to consistent points per day
+                market_hours_service = MarketHoursService()
                 filled_bucketed = _fill_missing_days_for_extended_hours(
-                    bucketed_list, tr.start_date, tr.end_date, TARGET_POINTS_PER_DAY
+                    bucketed_list, tr.start_date, tr.end_date, TARGET_POINTS_PER_DAY, market_hours_service
                 )
-                bucketed_list = _normalize_snapshots_per_day(filled_bucketed, TARGET_POINTS_PER_DAY)
+                bucketed_list = _normalize_snapshots_per_day(filled_bucketed, TARGET_POINTS_PER_DAY, market_hours_service)
                 logger.info(
                     f"Normalized bucketed extended hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
                     f"{len(bucketed_list)} total snapshots"
