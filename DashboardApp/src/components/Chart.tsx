@@ -195,11 +195,11 @@ function useChartData(
   
   // Downsample data for performance
   // Use filtered data to ensure snap points use correct timeRange
-  // For 1M market/extended hours, skip downsampling to preserve hourly intervals from backend
+  // For 1M and 3M market/extended hours, skip downsampling to preserve intervals from backend
   const downsampledData = useMemo(() => {
-    // For 1M market/extended hours, skip daily normalization to preserve hourly intervals
-    if (timeRange === '1M' && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
-      // Just return filtered data without normalization - backend already provides hourly intervals
+    // For 1M and 3M market/extended hours, skip daily normalization to preserve intervals from backend
+    if ((timeRange === '1M' || timeRange === '3M') && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
+      // Just return filtered data without normalization - backend already provides correct intervals
       return filteredInputData;
     }
     return downsampleData(filteredInputData, timeRange, tradingHoursMode);
@@ -1313,16 +1313,16 @@ function normalizeDailyData(
   timeRange: TimeRange,
   tradingHoursMode?: TradingHoursMode
 ): { x: string | number; y: number }[] | null {
+  // Skip normalization for 1M and 3M market/extended hours - backend already provides correct intervals
+  // We want to preserve these exact timestamps for the tooltip
+  if ((timeRange === '1M' || timeRange === '3M') && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
+    return null; // Skip - preserve intervals from backend
+  }
+  
   // Only apply daily normalization for shorter timeframes that would have intraday data
   // For longer timeframes, the backend already aggregates to daily buckets
   if (timeRange !== '1W' && timeRange !== '1M') {
     return null; // Not a daily chart, return null to skip normalization
-  }
-  
-  // Skip normalization for 1M market/extended hours - backend already provides hourly intervals
-  // We want to preserve these exact hourly timestamps for the tooltip
-  if (timeRange === '1M' && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
-    return null; // Skip - preserve hourly intervals from backend
   }
 
   if (data.length === 0) {
