@@ -762,7 +762,17 @@ async def get_asset_price_history(
                 # For each day, prefer market hours snapshots, but keep all if no market hours available
                 # This ensures we have data for all trading days while preferring market hours timestamps
                 final_snapshots = []
+                current_date_et = market_hours_service._to_et(datetime.utcnow()).date()
+                
                 for date, day_snapshots in sorted(snapshots_by_date_after_norm.items()):
+                    # For the current day, if market hasn't opened yet, exclude it entirely from market hours view
+                    if date == current_date_et:
+                        # Check if market is currently open
+                        if not market_hours_service.is_market_open(datetime.utcnow()):
+                            # Market not open yet today - exclude today's data
+                            logger.info(f"Excluding current day {date} from market hours view (market not open yet)")
+                            continue
+                    
                     # Separate market hours from non-market hours
                     market_hours_snaps = [s for s in day_snapshots if market_hours_service.is_market_open(s[0])]
                     non_market_hours_snaps = [s for s in day_snapshots if not market_hours_service.is_market_open(s[0])]
@@ -884,6 +894,48 @@ async def get_asset_price_history(
                     f"Normalized bucketed market hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
                     f"{len(bucketed_list)} total snapshots"
                 )
+                
+                # Post-normalization filtering: exclude current day if market hasn't opened yet
+                # and prefer market hours snapshots for each day
+                from collections import defaultdict
+                current_date_et = market_hours_service._to_et(datetime.utcnow()).date()
+                snapshots_by_date_after_norm = defaultdict(list)
+                for snap in bucketed_list:
+                    snap_et = market_hours_service._to_et(snap[0])
+                    snap_et_date = snap_et.date()
+                    snapshots_by_date_after_norm[snap_et_date].append(snap)
+                
+                final_bucketed = []
+                for date, day_snapshots in sorted(snapshots_by_date_after_norm.items()):
+                    # For the current day, if market hasn't opened yet, exclude it entirely from market hours view
+                    if date == current_date_et:
+                        # Check if market is currently open
+                        if not market_hours_service.is_market_open(datetime.utcnow()):
+                            # Market not open yet today - exclude today's data
+                            logger.info(f"Excluding current day {date} from bucketed market hours view (market not open yet)")
+                            continue
+                    
+                    # Separate market hours from non-market hours
+                    market_hours_snaps = [s for s in day_snapshots if market_hours_service.is_market_open(s[0])]
+                    non_market_hours_snaps = [s for s in day_snapshots if not market_hours_service.is_market_open(s[0])]
+                    
+                    # Prefer market hours snapshots, but use all if no market hours available
+                    if market_hours_snaps:
+                        # Use only market hours snapshots for this day
+                        final_bucketed.extend(market_hours_snaps)
+                        if non_market_hours_snaps:
+                            logger.debug(
+                                f"Bucketed day {date}: Using {len(market_hours_snaps)} market hours snapshots, "
+                                f"excluding {len(non_market_hours_snaps)} non-market-hours snapshots"
+                            )
+                    else:
+                        # No market hours snapshots available - use all snapshots for this day
+                        final_bucketed.extend(day_snapshots)
+                        logger.debug(
+                            f"Bucketed day {date}: No market hours snapshots, using {len(day_snapshots)} total snapshots"
+                        )
+                
+                bucketed_list = sorted(final_bucketed, key=lambda x: x[0])
             else:
                 # Extended hours mode: return all bucketed snapshots (no filtering)
                 logger.info(
