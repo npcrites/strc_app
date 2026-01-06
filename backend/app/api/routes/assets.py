@@ -204,6 +204,355 @@ def _get_previous_trading_day_closing_price(
     return None, None
 
 
+def _generate_5minute_market_hours_snapshots(
+    snapshots: List,
+    market_hours_service: MarketHoursService
+) -> List:
+    """
+    Generate snapshots at exact 5-minute intervals during market hours (9:30 AM - 4:00 PM ET).
+    
+    For each trading day, creates snapshots at:
+    - 9:30, 9:35, 9:40, ..., 3:50, 3:55 (4:00 PM is excluded as market closes at 4:00 PM)
+    
+    If a snapshot doesn't exist at an exact 5-minute mark, interpolates from surrounding snapshots.
+    
+    Args:
+        snapshots: List of snapshot tuples (timestamp, price_per_share, current_value)
+        market_hours_service: MarketHoursService instance
+        
+    Returns:
+        List of snapshots at exact 5-minute intervals during market hours
+    """
+    if not snapshots:
+        return snapshots
+    
+    # Group snapshots by trading day (ET date)
+    snapshots_by_date = {}
+    for snap in snapshots:
+        snap_timestamp = snap[0]
+        snap_et = market_hours_service._to_et(snap_timestamp)
+        snap_date = snap_et.date()
+        
+        # Only include trading days
+        if not market_hours_service.is_trading_day(snap_date):
+            continue
+            
+        if snap_date not in snapshots_by_date:
+            snapshots_by_date[snap_date] = []
+        snapshots_by_date[snap_date].append((snap_et, snap[1], snap[2]))  # Store ET time for easier processing
+    
+    generated_snapshots = []
+    
+    # For each trading day, generate 5-minute intervals
+    for date, day_snapshots in sorted(snapshots_by_date.items()):
+        # Sort by time
+        day_snapshots.sort(key=lambda x: x[0])
+        
+        # Generate 5-minute intervals from 9:30 AM to 3:55 PM ET
+        # Market hours: 9:30 AM - 4:00 PM ET (78 intervals: 9:30, 9:35, ..., 3:55)
+        market_open = time(9, 30)
+        market_close = time(16, 0)
+        
+        # Create list of 5-minute interval times
+        interval_times = []
+        current_time = market_open
+        while current_time < market_close:
+            interval_times.append(current_time)
+            # Add 5 minutes
+            minutes = current_time.minute + 5
+            hours = current_time.hour
+            if minutes >= 60:
+                hours += 1
+                minutes = 0
+            current_time = time(hours, minutes)
+        
+        # For each 5-minute interval, find or interpolate snapshot
+        day_intervals = []
+        for interval_time in interval_times:
+            interval_datetime_et = market_hours_service.ET_TIMEZONE.localize(
+                datetime.combine(date, interval_time)
+            )
+            interval_datetime_utc = interval_datetime_et.astimezone(pytz.utc).replace(tzinfo=None)
+            
+            # Find closest snapshot(s) to this interval
+            closest_snapshot = None
+            min_time_diff = timedelta.max
+            
+            for snap_et, price, value in day_snapshots:
+                time_diff = abs(snap_et - interval_datetime_et)
+                if time_diff < min_time_diff:
+                    min_time_diff = time_diff
+                    closest_snapshot = (snap_et, price, value)
+            
+            # If we found a snapshot within 2.5 minutes (half the interval), use it
+            # Otherwise, interpolate from surrounding snapshots
+            if min_time_diff <= timedelta(minutes=2, seconds=30):
+                # Use the closest snapshot
+                # Convert Decimal to float
+                closest_price = float(closest_snapshot[1]) if closest_snapshot[1] is not None else 0.0
+                closest_value = float(closest_snapshot[2]) if closest_snapshot[2] is not None else 0.0
+                day_intervals.append((interval_datetime_utc, closest_price, closest_value))
+            else:
+                # Interpolate from surrounding snapshots
+                # Find snapshots before and after this interval
+                before_snap = None
+                after_snap = None
+                
+                for snap_et, price, value in day_snapshots:
+                    if snap_et < interval_datetime_et:
+                        if before_snap is None or snap_et > before_snap[0]:
+                            before_snap = (snap_et, price, value)
+                    elif snap_et > interval_datetime_et:
+                        if after_snap is None or snap_et < after_snap[0]:
+                            after_snap = (snap_et, price, value)
+                
+                # Interpolate price and value
+                if before_snap and after_snap:
+                    # Linear interpolation
+                    # Convert Decimal to float for arithmetic operations
+                    total_diff = (after_snap[0] - before_snap[0]).total_seconds()
+                    interval_diff = (interval_datetime_et - before_snap[0]).total_seconds()
+                    ratio = interval_diff / total_diff if total_diff > 0 else 0
+                    
+                    # Convert Decimal to float before interpolation
+                    before_price = float(before_snap[1]) if before_snap[1] is not None else 0.0
+                    after_price = float(after_snap[1]) if after_snap[1] is not None else 0.0
+                    before_value = float(before_snap[2]) if before_snap[2] is not None else 0.0
+                    after_value = float(after_snap[2]) if after_snap[2] is not None else 0.0
+                    
+                    interpolated_price = before_price + (after_price - before_price) * ratio
+                    interpolated_value = before_value + (after_value - before_value) * ratio
+                    
+                    day_intervals.append((interval_datetime_utc, interpolated_price, interpolated_value))
+                elif before_snap:
+                    # Use before snapshot if no after snapshot
+                    # Convert Decimal to float
+                    before_price = float(before_snap[1]) if before_snap[1] is not None else 0.0
+                    before_value = float(before_snap[2]) if before_snap[2] is not None else 0.0
+                    day_intervals.append((interval_datetime_utc, before_price, before_value))
+                elif after_snap:
+                    # Use after snapshot if no before snapshot
+                    # Convert Decimal to float
+                    after_price = float(after_snap[1]) if after_snap[1] is not None else 0.0
+                    after_value = float(after_snap[2]) if after_snap[2] is not None else 0.0
+                    day_intervals.append((interval_datetime_utc, after_price, after_value))
+                elif day_snapshots:
+                    # Fallback: use first snapshot of the day
+                    first_snap = day_snapshots[0]
+                    # Convert Decimal to float
+                    first_price = float(first_snap[1]) if first_snap[1] is not None else 0.0
+                    first_value = float(first_snap[2]) if first_snap[2] is not None else 0.0
+                    day_intervals.append((interval_datetime_utc, first_price, first_value))
+        
+        generated_snapshots.extend(day_intervals)
+        
+        # Log intervals generated for this day
+        logger.debug(
+            f"Generated {len(day_intervals)} 5-minute intervals for {date}: "
+            f"first={day_intervals[0][0] if day_intervals else 'N/A'}, "
+            f"last={day_intervals[-1][0] if day_intervals else 'N/A'}"
+        )
+    
+    # Sort by timestamp
+    generated_snapshots.sort(key=lambda x: x[0])
+    
+    logger.info(
+        f"Generated {len(generated_snapshots)} 5-minute interval snapshots "
+        f"(from {len(snapshots)} original snapshots) for {len(snapshots_by_date)} trading days"
+    )
+    
+    return generated_snapshots
+
+
+def _generate_5minute_extended_hours_snapshots(
+    snapshots: List,
+    start_date: Optional[datetime],
+    end_date: datetime,
+    market_hours_service: MarketHoursService
+) -> List:
+    """
+    Generate snapshots at exact 5-minute intervals for extended hours mode (all hours, all days).
+    
+    For each calendar day, creates snapshots at 5-minute intervals throughout the day (00:00 - 23:55).
+    For trading days, uses actual snapshots when available.
+    For weekends/holidays, first checks if actual prices exist - if yes, uses them; if no, uses previous trading day's closing price.
+    If no data point exists for a 5-minute period, uses the previous 5-minute period's price.
+    
+    Args:
+        snapshots: List of snapshot tuples (timestamp, price_per_share, current_value)
+        start_date: Start of time range (None for ALL)
+        end_date: End of time range
+        market_hours_service: MarketHoursService instance
+        
+    Returns:
+        List of snapshots at exact 5-minute intervals for all calendar days
+    """
+    if not snapshots:
+        return snapshots
+    
+    # Group snapshots by date (ET date) - include ALL dates, not just trading days
+    # Store as (utc_timestamp, price, value) for compatibility with _get_previous_trading_day_closing_price
+    snapshots_by_date = {}
+    for snap in snapshots:
+        snap_timestamp = snap[0]  # UTC timestamp
+        snap_et = market_hours_service._to_et(snap_timestamp)
+        snap_date = snap_et.date()
+        
+        if snap_date not in snapshots_by_date:
+            snapshots_by_date[snap_date] = []
+        # Store UTC timestamp for compatibility with _get_previous_trading_day_closing_price
+        snapshots_by_date[snap_date].append((snap_timestamp, snap[1], snap[2]))
+    
+    # Determine date range
+    if start_date:
+        start_date_et = market_hours_service._to_et(start_date).date()
+    else:
+        # Use earliest snapshot date
+        start_date_et = min(snapshots_by_date.keys()) if snapshots_by_date else end_date.date()
+    
+    end_date_et = market_hours_service._to_et(end_date).date()
+    
+    generated_snapshots = []
+    last_price = None
+    last_value = None
+    
+    # Iterate through all calendar days in range
+    current_date = start_date_et
+    while current_date <= end_date_et:
+        # Generate 5-minute intervals for the entire day (00:00 - 23:55)
+        # 24 hours * 12 intervals per hour = 288 intervals per day
+        interval_times = []
+        current_time = time(0, 0)
+        while current_time < time(23, 59, 59):
+            interval_times.append(current_time)
+            # Add 5 minutes
+            minutes = current_time.minute + 5
+            hours = current_time.hour
+            if minutes >= 60:
+                hours += 1
+                minutes = 0
+            if hours >= 24:
+                break
+            current_time = time(hours, minutes)
+        
+        day_snapshots = snapshots_by_date.get(current_date, [])
+        day_snapshots.sort(key=lambda x: x[0])  # Sort by UTC timestamp
+        
+        # Check if this is a trading day
+        is_trading_day = market_hours_service.is_trading_day(current_date)
+        
+        day_intervals = []
+        
+        if day_snapshots:
+            # Day has actual snapshots - use them (whether trading day or not)
+            for interval_time in interval_times:
+                interval_datetime_et = market_hours_service.ET_TIMEZONE.localize(
+                    datetime.combine(current_date, interval_time)
+                )
+                interval_datetime_utc = interval_datetime_et.astimezone(pytz.utc).replace(tzinfo=None)
+                
+                # Find closest snapshot(s) to this interval
+                closest_snapshot = None
+                min_time_diff = timedelta.max
+                
+                for snap_utc, price, value in day_snapshots:
+                    # snap_utc is UTC timestamp, interval_datetime_utc is also UTC
+                    time_diff = abs(snap_utc - interval_datetime_utc)
+                    if time_diff < min_time_diff:
+                        min_time_diff = time_diff
+                        closest_snapshot = (snap_utc, price, value)
+                
+                # If we found a snapshot within 2.5 minutes, use it
+                # Otherwise, use previous interval's price (forward fill)
+                if min_time_diff <= timedelta(minutes=2, seconds=30) and closest_snapshot:
+                    # Use the closest snapshot
+                    closest_price = float(closest_snapshot[1]) if closest_snapshot[1] is not None else 0.0
+                    closest_value = float(closest_snapshot[2]) if closest_snapshot[2] is not None else 0.0
+                    day_intervals.append((interval_datetime_utc, closest_price, closest_value))
+                    last_price = closest_price
+                    last_value = closest_value
+                else:
+                    # Use previous 5-minute period's price (forward fill)
+                    if last_price is not None and last_value is not None:
+                        day_intervals.append((interval_datetime_utc, last_price, last_value))
+                    elif day_snapshots:
+                        # Fallback: use first snapshot of the day
+                        first_snap = day_snapshots[0]
+                        first_price = float(first_snap[1]) if first_snap[1] is not None else 0.0
+                        first_value = float(first_snap[2]) if first_snap[2] is not None else 0.0
+                        day_intervals.append((interval_datetime_utc, first_price, first_value))
+                        last_price = first_price
+                        last_value = first_value
+                    else:
+                        # No snapshots and no previous price - skip this interval
+                        continue
+        elif not is_trading_day:
+            # Weekend/holiday with no snapshots - use previous trading day's closing price
+            closing_price, closing_value = _get_previous_trading_day_closing_price(
+                snapshots_by_date, current_date, market_hours_service
+            )
+            
+            # Use closing price if available, otherwise use last known price
+            fill_price = closing_price if closing_price is not None else last_price
+            fill_value = closing_value if closing_value is not None else last_value
+            
+            if fill_price is not None and fill_value is not None:
+                # Convert Decimal to float
+                fill_price = float(fill_price) if not isinstance(fill_price, float) else fill_price
+                fill_value = float(fill_value) if not isinstance(fill_value, float) else fill_value
+                
+                # Use this price for all intervals in the day
+                for interval_time in interval_times:
+                    interval_datetime_et = market_hours_service.ET_TIMEZONE.localize(
+                        datetime.combine(current_date, interval_time)
+                    )
+                    interval_datetime_utc = interval_datetime_et.astimezone(pytz.utc).replace(tzinfo=None)
+                    day_intervals.append((interval_datetime_utc, fill_price, fill_value))
+                
+                # Update last known price for next day
+                last_price = fill_price
+                last_value = fill_value
+            elif last_price is not None and last_value is not None:
+                # No closing price available, use last known price
+                for interval_time in interval_times:
+                    interval_datetime_et = market_hours_service.ET_TIMEZONE.localize(
+                        datetime.combine(current_date, interval_time)
+                    )
+                    interval_datetime_utc = interval_datetime_et.astimezone(pytz.utc).replace(tzinfo=None)
+                    day_intervals.append((interval_datetime_utc, last_price, last_value))
+        else:
+            # Trading day with no snapshots - use last known price (forward fill)
+            if last_price is not None and last_value is not None:
+                for interval_time in interval_times:
+                    interval_datetime_et = market_hours_service.ET_TIMEZONE.localize(
+                        datetime.combine(current_date, interval_time)
+                    )
+                    interval_datetime_utc = interval_datetime_et.astimezone(pytz.utc).replace(tzinfo=None)
+                    day_intervals.append((interval_datetime_utc, last_price, last_value))
+        
+        generated_snapshots.extend(day_intervals)
+        
+        # Log intervals generated for this day
+        logger.debug(
+            f"Generated {len(day_intervals)} 5-minute intervals for {current_date} "
+            f"(trading_day={is_trading_day}, has_snapshots={len(day_snapshots) > 0}): "
+            f"first={day_intervals[0][0] if day_intervals else 'N/A'}, "
+            f"last={day_intervals[-1][0] if day_intervals else 'N/A'}"
+        )
+        
+        current_date += timedelta(days=1)
+    
+    # Sort by timestamp
+    generated_snapshots.sort(key=lambda x: x[0])
+    
+    logger.info(
+        f"Generated {len(generated_snapshots)} 5-minute interval snapshots for extended hours "
+        f"(from {len(snapshots)} original snapshots) covering {len(snapshots_by_date)} days"
+    )
+    
+    return generated_snapshots
+
+
 def _fill_missing_days_for_extended_hours(
     snapshots: List,
     start_date: Optional[datetime],
@@ -715,133 +1064,187 @@ async def get_asset_price_history(
             # Filter to market hours only if market hours mode
             if trading_hours_mode == "market":
                 market_hours_service = MarketHoursService()
-                # Filter to only trading days (not just market hours)
-                # Snapshots may be stored at any time (e.g., 4:00 AM UTC = midnight ET),
-                # but we want to include all snapshots from trading days
-                # The frontend will handle displaying only market hours when dragging
-                # Snapshots are tuples: (timestamp, price_per_share, current_value)
-                filtered_snapshots = []
-                excluded_snapshots = []
-                for snap in snapshots:
-                    snap_et = market_hours_service._to_et(snap[0])
-                    snap_et_date = snap_et.date()
-                    is_trading_day = market_hours_service.is_trading_day(snap_et_date)
-                    if is_trading_day:
-                        filtered_snapshots.append(snap)
-                    else:
-                        # Track excluded snapshots for debugging
-                        excluded_snapshots.append((snap_et_date, snap_et, snap[0]))
                 
-                if excluded_snapshots:
-                    # Log sample of excluded snapshots
-                    sample_excluded = excluded_snapshots[:10]
-                    logger.info(
-                        f"Excluded {len(excluded_snapshots)} non-trading-day snapshots for {ticker_upper}. "
-                        f"Sample: {[(d.strftime('%Y-%m-%d'), et.strftime('%Y-%m-%d %H:%M ET')) for d, et, _ in sample_excluded]}"
-                    )
-                
-                logger.info(
-                    f"Filtered to {len(filtered_snapshots)} trading day snapshots "
-                    f"(from {len(snapshots)} total) for {ticker_upper}"
-                )
-                snapshots = filtered_snapshots
-                
-                # Normalize to consistent points per day for market hours
-                # This will prefer market hours snapshots when available, but include all trading day snapshots
-                # to ensure we have data for all days in the range
-                snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY, market_hours_service)
-                
-                # Group by date to filter intelligently
-                from collections import defaultdict
-                snapshots_by_date_after_norm = defaultdict(list)
-                for snap in snapshots:
-                    snap_et = market_hours_service._to_et(snap[0])
-                    snap_et_date = snap_et.date()
-                    snapshots_by_date_after_norm[snap_et_date].append(snap)
-                
-                # For each day, prefer market hours snapshots, but keep all if no market hours available
-                # This ensures we have data for all trading days while preferring market hours timestamps
-                final_snapshots = []
-                current_date_et = market_hours_service._to_et(datetime.utcnow()).date()
-                
-                for date, day_snapshots in sorted(snapshots_by_date_after_norm.items()):
-                    # For the current day, if market hasn't opened yet, exclude it entirely from market hours view
-                    if date == current_date_et:
-                        # Check if market is currently open
-                        if not market_hours_service.is_market_open(datetime.utcnow()):
-                            # Market not open yet today - exclude today's data
-                            logger.info(f"Excluding current day {date} from market hours view (market not open yet)")
+                # For 1W time range, generate exact 5-minute intervals during market hours
+                if time_range == "1W":
+                    # First, filter to only trading days and market hours snapshots
+                    filtered_snapshots = []
+                    excluded_snapshots = []
+                    for snap in snapshots:
+                        snap_et = market_hours_service._to_et(snap[0])
+                        snap_et_date = snap_et.date()
+                        
+                        # Only include trading days
+                        if not market_hours_service.is_trading_day(snap_et_date):
+                            excluded_snapshots.append((snap_et_date, snap_et, snap[0]))
                             continue
+                        
+                        # Only include market hours (9:30 AM - 4:00 PM ET)
+                        if market_hours_service.is_market_open(snap[0]):
+                            filtered_snapshots.append(snap)
                     
-                    # Separate market hours from non-market hours
-                    market_hours_snaps = [s for s in day_snapshots if market_hours_service.is_market_open(s[0])]
-                    non_market_hours_snaps = [s for s in day_snapshots if not market_hours_service.is_market_open(s[0])]
-                    
-                    # Prefer market hours snapshots, but use all if no market hours available
-                    if market_hours_snaps:
-                        # Use only market hours snapshots for this day
-                        final_snapshots.extend(market_hours_snaps)
-                        if non_market_hours_snaps:
-                            logger.debug(
-                                f"Day {date}: Using {len(market_hours_snaps)} market hours snapshots, "
-                                f"excluding {len(non_market_hours_snaps)} non-market-hours snapshots"
-                            )
-                    else:
-                        # No market hours snapshots available - use all snapshots for this day
-                        # This ensures we don't lose days that only have pre-market/after-hours data
-                        final_snapshots.extend(day_snapshots)
-                        logger.debug(
-                            f"Day {date}: No market hours snapshots, using {len(day_snapshots)} total snapshots"
+                    if excluded_snapshots:
+                        # Log sample of excluded snapshots
+                        sample_excluded = excluded_snapshots[:10]
+                        logger.info(
+                            f"Excluded {len(excluded_snapshots)} non-trading-day or non-market-hours snapshots for {ticker_upper} 1W. "
+                            f"Sample: {[(d.strftime('%Y-%m-%d'), et.strftime('%Y-%m-%d %H:%M ET')) for d, et, _ in sample_excluded]}"
                         )
-                
-                snapshots = sorted(final_snapshots, key=lambda x: x[0])
-                
-                # Final verification: ensure all snapshots are from trading days
-                verified_snapshots = []
-                non_trading_after_norm = []
-                for snap in snapshots:
-                    snap_et = market_hours_service._to_et(snap[0])
-                    snap_et_date = snap_et.date()
-                    if market_hours_service.is_trading_day(snap_et_date):
-                        verified_snapshots.append(snap)
-                    else:
-                        non_trading_after_norm.append((snap_et_date, snap_et))
-                
-                if non_trading_after_norm:
-                    logger.warning(
-                        f"Found {len(non_trading_after_norm)} non-trading-day snapshots after normalization for {ticker_upper}. "
-                        f"Removing them. Sample: {[(d.strftime('%Y-%m-%d'), et.strftime('%H:%M ET')) for d, et in non_trading_after_norm[:10]]}"
+                    
+                    logger.info(
+                        f"Filtered to {len(filtered_snapshots)} market hours snapshots "
+                        f"(from {len(snapshots)} total) for {ticker_upper} 1W market hours"
                     )
-                    snapshots = verified_snapshots
-                
-                logger.info(
-                    f"Normalized market hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
-                    f"{len(snapshots)} total snapshots"
-                )
+                    
+                    # Generate exact 5-minute interval snapshots
+                    snapshots = _generate_5minute_market_hours_snapshots(filtered_snapshots, market_hours_service)
+                    
+                    logger.info(
+                        f"Generated {len(snapshots)} 5-minute interval snapshots for {ticker_upper} 1W market hours"
+                    )
+                else:
+                    # For other time ranges (1M, 3M, 1Y, ALL), use existing normalization logic
+                    # Filter to only trading days (not just market hours)
+                    # Snapshots may be stored at any time (e.g., 4:00 AM UTC = midnight ET),
+                    # but we want to include all snapshots from trading days
+                    # The frontend will handle displaying only market hours when dragging
+                    # Snapshots are tuples: (timestamp, price_per_share, current_value)
+                    filtered_snapshots = []
+                    excluded_snapshots = []
+                    for snap in snapshots:
+                        snap_et = market_hours_service._to_et(snap[0])
+                        snap_et_date = snap_et.date()
+                        is_trading_day = market_hours_service.is_trading_day(snap_et_date)
+                        if is_trading_day:
+                            filtered_snapshots.append(snap)
+                        else:
+                            # Track excluded snapshots for debugging
+                            excluded_snapshots.append((snap_et_date, snap_et, snap[0]))
+                    
+                    if excluded_snapshots:
+                        # Log sample of excluded snapshots
+                        sample_excluded = excluded_snapshots[:10]
+                        logger.info(
+                            f"Excluded {len(excluded_snapshots)} non-trading-day snapshots for {ticker_upper}. "
+                            f"Sample: {[(d.strftime('%Y-%m-%d'), et.strftime('%Y-%m-%d %H:%M ET')) for d, et, _ in sample_excluded]}"
+                        )
+                    
+                    logger.info(
+                        f"Filtered to {len(filtered_snapshots)} trading day snapshots "
+                        f"(from {len(snapshots)} total) for {ticker_upper}"
+                    )
+                    snapshots = filtered_snapshots
+                    
+                    # Normalize to consistent points per day for market hours
+                    # This will prefer market hours snapshots when available, but include all trading day snapshots
+                    # to ensure we have data for all days in the range
+                    snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY, market_hours_service)
+                    
+                    # Group by date to filter intelligently
+                    from collections import defaultdict
+                    snapshots_by_date_after_norm = defaultdict(list)
+                    for snap in snapshots:
+                        snap_et = market_hours_service._to_et(snap[0])
+                        snap_et_date = snap_et.date()
+                        snapshots_by_date_after_norm[snap_et_date].append(snap)
+                    
+                    # For each day, prefer market hours snapshots, but keep all if no market hours available
+                    # This ensures we have data for all trading days while preferring market hours timestamps
+                    final_snapshots = []
+                    current_date_et = market_hours_service._to_et(datetime.utcnow()).date()
+                    
+                    for date, day_snapshots in sorted(snapshots_by_date_after_norm.items()):
+                        # For the current day, if market hasn't opened yet, exclude it entirely from market hours view
+                        if date == current_date_et:
+                            # Check if market is currently open
+                            if not market_hours_service.is_market_open(datetime.utcnow()):
+                                # Market not open yet today - exclude today's data
+                                logger.info(f"Excluding current day {date} from market hours view (market not open yet)")
+                                continue
+                        
+                        # Separate market hours from non-market hours
+                        market_hours_snaps = [s for s in day_snapshots if market_hours_service.is_market_open(s[0])]
+                        non_market_hours_snaps = [s for s in day_snapshots if not market_hours_service.is_market_open(s[0])]
+                        
+                        # Prefer market hours snapshots, but use all if no market hours available
+                        if market_hours_snaps:
+                            # Use only market hours snapshots for this day
+                            final_snapshots.extend(market_hours_snaps)
+                            if non_market_hours_snaps:
+                                logger.debug(
+                                    f"Day {date}: Using {len(market_hours_snaps)} market hours snapshots, "
+                                    f"excluding {len(non_market_hours_snaps)} non-market-hours snapshots"
+                                )
+                        else:
+                            # No market hours snapshots available - use all snapshots for this day
+                            # This ensures we don't lose days that only have pre-market/after-hours data
+                            final_snapshots.extend(day_snapshots)
+                            logger.debug(
+                                f"Day {date}: No market hours snapshots, using {len(day_snapshots)} total snapshots"
+                            )
+                    
+                    snapshots = sorted(final_snapshots, key=lambda x: x[0])
+                    
+                    # Final verification: ensure all snapshots are from trading days
+                    verified_snapshots = []
+                    non_trading_after_norm = []
+                    for snap in snapshots:
+                        snap_et = market_hours_service._to_et(snap[0])
+                        snap_et_date = snap_et.date()
+                        if market_hours_service.is_trading_day(snap_et_date):
+                            verified_snapshots.append(snap)
+                        else:
+                            non_trading_after_norm.append((snap_et_date, snap_et))
+                    
+                    if non_trading_after_norm:
+                        logger.warning(
+                            f"Found {len(non_trading_after_norm)} non-trading-day snapshots after normalization for {ticker_upper}. "
+                            f"Removing them. Sample: {[(d.strftime('%Y-%m-%d'), et.strftime('%H:%M ET')) for d, et in non_trading_after_norm[:10]]}"
+                        )
+                        snapshots = verified_snapshots
+                    
+                    logger.info(
+                        f"Normalized market hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
+                        f"{len(snapshots)} total snapshots"
+                    )
             elif trading_hours_mode == "extended":
-                # For extended hours mode, fill in missing calendar days with previous trading day's closing price
-                # This ensures holidays and weekends show on the chart with the actual closing price
-                from datetime import timedelta
                 market_hours_service = MarketHoursService()
-                logger.info(
-                    f"Extended hours mode: starting with {len(snapshots)} snapshots, "
-                    f"time range: {tr.start_date.date() if tr.start_date else None} to {tr.end_date.date()}"
-                )
-                filled_snapshots = _fill_missing_days_for_extended_hours(
-                    snapshots, tr.start_date, tr.end_date, TARGET_POINTS_PER_DAY, market_hours_service
-                )
-                logger.info(
-                    f"Extended hours mode: filled missing days - "
-                    f"{len(filled_snapshots)} total snapshots (from {len(snapshots)} original)"
-                )
-                snapshots = filled_snapshots
                 
-                # Normalize to consistent points per day for extended hours
-                snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY, market_hours_service)
-                logger.info(
-                    f"Normalized extended hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
-                    f"{len(snapshots)} total snapshots"
-                )
+                # For 1W time range, generate exact 5-minute intervals for all calendar days
+                if time_range == "1W":
+                    # Generate 5-minute intervals for extended hours (all hours, all days)
+                    # This includes weekends/holidays - uses actual prices if available, otherwise previous trading day's closing price
+                    snapshots = _generate_5minute_extended_hours_snapshots(
+                        snapshots, tr.start_date, tr.end_date, market_hours_service
+                    )
+                    
+                    logger.info(
+                        f"Generated {len(snapshots)} 5-minute interval snapshots for {ticker_upper} 1W extended hours"
+                    )
+                else:
+                    # For other time ranges (1M, 3M, 1Y, ALL), use existing normalization logic
+                    # For extended hours mode, fill in missing calendar days with previous trading day's closing price
+                    # This ensures holidays and weekends show on the chart with the actual closing price
+                    from datetime import timedelta
+                    logger.info(
+                        f"Extended hours mode: starting with {len(snapshots)} snapshots, "
+                        f"time range: {tr.start_date.date() if tr.start_date else None} to {tr.end_date.date()}"
+                    )
+                    filled_snapshots = _fill_missing_days_for_extended_hours(
+                        snapshots, tr.start_date, tr.end_date, TARGET_POINTS_PER_DAY, market_hours_service
+                    )
+                    logger.info(
+                        f"Extended hours mode: filled missing days - "
+                        f"{len(filled_snapshots)} total snapshots (from {len(snapshots)} original)"
+                    )
+                    snapshots = filled_snapshots
+                    
+                    # Normalize to consistent points per day for extended hours
+                    snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY, market_hours_service)
+                    logger.info(
+                        f"Normalized extended hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
+                        f"{len(snapshots)} total snapshots"
+                    )
             
             # Convert snapshots (tuples) to PricePoint objects
             # Snapshots are tuples: (timestamp, price_per_share, current_value)
