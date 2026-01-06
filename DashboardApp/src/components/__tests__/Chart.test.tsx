@@ -34,12 +34,14 @@ jest.mock('react-native-gifted-charts', () => ({
 }));
 
 describe('Chart Component', () => {
+  // Use trading days for mock data (Monday-Friday)
+  // Jan 8, 2024 is a Monday, so we use that week
   const mockData = [
-    { x: '2024-01-01', y: 100 },
-    { x: '2024-01-02', y: 150 },
-    { x: '2024-01-03', y: 120 },
-    { x: '2024-01-04', y: 180 },
-    { x: '2024-01-05', y: 200 },
+    { x: '2024-01-08', y: 100 }, // Monday
+    { x: '2024-01-09', y: 150 }, // Tuesday
+    { x: '2024-01-10', y: 120 }, // Wednesday
+    { x: '2024-01-11', y: 180 }, // Thursday
+    { x: '2024-01-12', y: 200 }, // Friday
   ];
 
   describe('generateChartPath', () => {
@@ -138,45 +140,45 @@ describe('Chart Component', () => {
 
   describe('Chart Component Rendering', () => {
     it('should render with empty data', () => {
-      const { getByTestID } = render(
-        <Chart data={[]} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={[]} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should render with valid data', () => {
-      const { getByTestID } = render(
-        <Chart data={mockData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={mockData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
-      expect(getByTestID('chart-overlay')).toBeTruthy();
-      expect(getByTestID('chart-container')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
+      expect(getByTestId('chart-overlay')).toBeTruthy();
+      expect(getByTestId('chart-container')).toBeTruthy();
     });
 
     it('should render with custom width and height', () => {
-      const { getByTestID } = render(
-        <Chart data={mockData} width={500} height={300} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={mockData} width={500} height={300} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should render with different pattern types', () => {
       const patterns: Array<'dots' | 'none'> = ['dots', 'none'];
       patterns.forEach(pattern => {
-        const { getByTestID } = render(
-          <Chart data={mockData} patternType={pattern} testID="chart" />
+        const { getByTestId } = render(
+          <Chart data={mockData} patternType={pattern} testID="chart" tradingHoursMode="extended" />
         );
-        expect(getByTestID('chart')).toBeTruthy();
+        expect(getByTestId('chart')).toBeTruthy();
       });
     });
 
     it('should handle different time ranges', () => {
       const timeRanges: Array<'1W' | '1M' | '3M' | '1Y' | 'ALL'> = ['1W', '1M', '3M', '1Y', 'ALL'];
       timeRanges.forEach(range => {
-        const { getByTestID } = render(
-          <Chart data={mockData} timeRange={range} testID="chart" />
+        const { getByTestId } = render(
+          <Chart data={mockData} timeRange={range} testID="chart" tradingHoursMode="extended" />
         );
-        expect(getByTestID('chart')).toBeTruthy();
+        expect(getByTestId('chart')).toBeTruthy();
       });
     });
 
@@ -189,10 +191,10 @@ describe('Chart Component', () => {
         patternColor: '#00FF00',
         patternOpacity: 0.5,
       };
-      const { getByTestID } = render(
-        <Chart data={mockData} config={customConfig} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={mockData} config={customConfig} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
   });
 
@@ -235,10 +237,10 @@ describe('Chart Component', () => {
   describe('Edge Cases', () => {
     it('should handle single data point', () => {
       const data = [{ x: '2024-01-01', y: 100 }];
-      const { getByTestID } = render(
-        <Chart data={data} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={data} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle two data points', () => {
@@ -246,10 +248,10 @@ describe('Chart Component', () => {
         { x: '2024-01-01', y: 100 },
         { x: '2024-01-02', y: 150 },
       ];
-      const { getByTestID } = render(
-        <Chart data={data} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={data} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle negative values', () => {
@@ -258,10 +260,10 @@ describe('Chart Component', () => {
         { x: '2024-01-02', y: -100 },
         { x: '2024-01-03', y: -75 },
       ];
-      const { getByTestID } = render(
-        <Chart data={data} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={data} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle zero values', () => {
@@ -270,10 +272,10 @@ describe('Chart Component', () => {
         { x: '2024-01-02', y: 0 },
         { x: '2024-01-03', y: 0 },
       ];
-      const { getByTestID } = render(
-        <Chart data={data} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={data} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle very large values', () => {
@@ -282,10 +284,10 @@ describe('Chart Component', () => {
         { x: '2024-01-02', y: 2000000 },
         { x: '2024-01-03', y: 1500000 },
       ];
-      const { getByTestID } = render(
-        <Chart data={data} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={data} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle very small values', () => {
@@ -294,10 +296,10 @@ describe('Chart Component', () => {
         { x: '2024-01-02', y: 0.002 },
         { x: '2024-01-03', y: 0.0015 },
       ];
-      const { getByTestID } = render(
-        <Chart data={data} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={data} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle mixed positive and negative values', () => {
@@ -307,45 +309,45 @@ describe('Chart Component', () => {
         { x: '2024-01-03', y: -25 },
         { x: '2024-01-04', y: 75 },
       ];
-      const { getByTestID } = render(
-        <Chart data={data} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={data} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
   });
 
   describe('Mask and Gradient Tests', () => {
     it('should render with dots pattern and mask', () => {
-      const { getByTestID } = render(
-        <Chart data={mockData} patternType="dots" testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={mockData} patternType="dots" testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart-overlay')).toBeTruthy();
+      expect(getByTestId('chart-overlay')).toBeTruthy();
     });
 
     it('should render without dots when patternType is none', () => {
-      const { getByTestID } = render(
-        <Chart data={mockData} patternType="none" testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={mockData} patternType="none" testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart-overlay')).toBeTruthy();
+      expect(getByTestId('chart-overlay')).toBeTruthy();
     });
   });
 
   describe('Callback Tests', () => {
     it('should call onDragStart when drag starts', () => {
       const onDragStart = jest.fn();
-      const { getByTestID } = render(
-        <Chart data={mockData} onDragStart={onDragStart} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={mockData} onDragStart={onDragStart} testID="chart" tradingHoursMode="extended" />
       );
       // Note: Actual drag testing would require more complex setup
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should call onDragEnd when drag ends', () => {
       const onDragEnd = jest.fn();
-      const { getByTestID } = render(
-        <Chart data={mockData} onDragEnd={onDragEnd} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={mockData} onDragEnd={onDragEnd} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
   });
 
@@ -465,23 +467,23 @@ describe('Chart Component', () => {
 
   describe('Data State Transitions', () => {
     it('should handle transition from empty to populated data', () => {
-      const { rerender, getByTestID } = render(
-        <Chart data={[]} testID="chart" />
+      const { rerender, getByTestId } = render(
+        <Chart data={[]} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
 
-      rerender(<Chart data={mockData} testID="chart" />);
-      expect(getByTestID('chart')).toBeTruthy();
+      rerender(<Chart data={mockData} testID="chart" tradingHoursMode="extended" />);
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle transition from populated to empty data', () => {
-      const { rerender, getByTestID } = render(
-        <Chart data={mockData} testID="chart" />
+      const { rerender, getByTestId } = render(
+        <Chart data={mockData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
 
-      rerender(<Chart data={[]} testID="chart" />);
-      expect(getByTestID('chart')).toBeTruthy();
+      rerender(<Chart data={[]} testID="chart" tradingHoursMode="extended" />);
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle data refresh with same timeframe', () => {
@@ -494,40 +496,40 @@ describe('Chart Component', () => {
         { x: '2024-01-02', y: 155 },
       ];
 
-      const { rerender, getByTestID } = render(
-        <Chart data={initialData} timeRange="1W" testID="chart" />
+      const { rerender, getByTestId } = render(
+        <Chart data={initialData} timeRange="1W" testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
 
-      rerender(<Chart data={refreshedData} timeRange="1W" testID="chart" />);
-      expect(getByTestID('chart')).toBeTruthy();
+      rerender(<Chart data={refreshedData} timeRange="1W" testID="chart" tradingHoursMode="extended" />);
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle timeframe change with same data', () => {
-      const { rerender, getByTestID } = render(
-        <Chart data={mockData} timeRange="1W" testID="chart" />
+      const { rerender, getByTestId } = render(
+        <Chart data={mockData} timeRange="1W" testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
 
-      rerender(<Chart data={mockData} timeRange="1M" testID="chart" />);
-      expect(getByTestID('chart')).toBeTruthy();
+      rerender(<Chart data={mockData} timeRange="1M" testID="chart" tradingHoursMode="extended" />);
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle rapid timeframe toggling', () => {
-      const { rerender, getByTestID } = render(
-        <Chart data={mockData} timeRange="1W" testID="chart" />
+      const { rerender, getByTestId } = render(
+        <Chart data={mockData} timeRange="1W" testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
 
       // Toggle between two timeframes
-      rerender(<Chart data={mockData} timeRange="1M" testID="chart" />);
-      expect(getByTestID('chart')).toBeTruthy();
+      rerender(<Chart data={mockData} timeRange="1M" testID="chart" tradingHoursMode="extended" />);
+      expect(getByTestId('chart')).toBeTruthy();
 
-      rerender(<Chart data={mockData} timeRange="1W" testID="chart" />);
-      expect(getByTestID('chart')).toBeTruthy();
+      rerender(<Chart data={mockData} timeRange="1W" testID="chart" tradingHoursMode="extended" />);
+      expect(getByTestId('chart')).toBeTruthy();
 
-      rerender(<Chart data={mockData} timeRange="1M" testID="chart" />);
-      expect(getByTestID('chart')).toBeTruthy();
+      rerender(<Chart data={mockData} timeRange="1M" testID="chart" tradingHoursMode="extended" />);
+      expect(getByTestId('chart')).toBeTruthy();
     });
   });
 
@@ -537,10 +539,10 @@ describe('Chart Component', () => {
         x: `2024-01-${String(i + 1).padStart(2, '0')}`,
         y: Math.sin(i / 10) * 100 + 100,
       }));
-      const { getByTestID } = render(
-        <Chart data={largeData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={largeData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle datasets with 10,000+ points', () => {
@@ -548,10 +550,10 @@ describe('Chart Component', () => {
         x: i,
         y: Math.random() * 1000,
       }));
-      const { getByTestID } = render(
-        <Chart data={veryLargeData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={veryLargeData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should maintain performance with large datasets across timeframes', () => {
@@ -562,10 +564,10 @@ describe('Chart Component', () => {
       const timeRanges: Array<'1W' | '1M' | '3M' | '1Y' | 'ALL'> = ['1W', '1M', '3M', '1Y', 'ALL'];
       
       timeRanges.forEach(range => {
-        const { getByTestID } = render(
-          <Chart data={largeData} timeRange={range} testID="chart" />
+        const { getByTestId } = render(
+          <Chart data={largeData} timeRange={range} testID="chart" tradingHoursMode="extended" />
         );
-        expect(getByTestID('chart')).toBeTruthy();
+        expect(getByTestId('chart')).toBeTruthy();
       });
     });
   });
@@ -577,10 +579,10 @@ describe('Chart Component', () => {
         { x: '2024-01-01', y: 150 },
         { x: '2024-01-02', y: 120 },
       ];
-      const { getByTestID } = render(
-        <Chart data={duplicateData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={duplicateData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle data with non-sequential x values', () => {
@@ -590,10 +592,10 @@ describe('Chart Component', () => {
         { x: '2024-01-10', y: 120 },
         { x: '2024-01-15', y: 180 },
       ];
-      const { getByTestID } = render(
-        <Chart data={nonSequentialData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={nonSequentialData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle data with extreme value ranges', () => {
@@ -602,10 +604,10 @@ describe('Chart Component', () => {
         { x: '2024-01-02', y: 1000000 },
         { x: '2024-01-03', y: 500000 },
       ];
-      const { getByTestID } = render(
-        <Chart data={extremeData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={extremeData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle data with NaN values gracefully', () => {
@@ -615,10 +617,10 @@ describe('Chart Component', () => {
         { x: '2024-01-03', y: 120 },
       ];
       // Should not crash, though behavior may vary
-      const { getByTestID } = render(
-        <Chart data={nanData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={nanData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle data with Infinity values gracefully', () => {
@@ -627,10 +629,10 @@ describe('Chart Component', () => {
         { x: '2024-01-02', y: Infinity as any },
         { x: '2024-01-03', y: 120 },
       ];
-      const { getByTestID } = render(
-        <Chart data={infinityData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={infinityData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
   });
 
@@ -640,10 +642,10 @@ describe('Chart Component', () => {
         x: new Date(2024, 0, i + 1).toISOString(),
         y: 100 + Math.random() * 20 - 10, // Price between 90-110
       }));
-      const { getByTestID } = render(
-        <Chart data={stockData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={stockData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle portfolio value data (large numbers)', () => {
@@ -651,35 +653,38 @@ describe('Chart Component', () => {
         x: new Date(2024, 0, i + 1).toISOString(),
         y: 100000 + Math.random() * 10000, // Portfolio value ~100k
       }));
-      const { getByTestID } = render(
-        <Chart data={portfolioData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={portfolioData} testID="chart" tradingHoursMode="extended" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle percentage data (0-100 range)', () => {
+      // Use recent timestamps for timeRange filtering
+      const now = Date.now();
       const percentageData = Array.from({ length: 50 }, (_, i) => ({
-        x: i,
+        x: now - (50 - i) * 24 * 60 * 60 * 1000, // Recent timestamps
         y: Math.random() * 100, // 0-100%
       }));
-      const { getByTestID } = render(
-        <Chart data={percentageData} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={percentageData} testID="chart" tradingHoursMode="extended" timeRange="ALL" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
 
     it('should handle data with gaps (missing days)', () => {
+      // Use trading days for the test data
       const dataWithGaps = [
-        { x: '2024-01-01', y: 100 },
-        { x: '2024-01-02', y: 150 },
-        // Gap: missing 2024-01-03
-        { x: '2024-01-04', y: 120 },
-        { x: '2024-01-05', y: 180 },
+        { x: '2024-01-08T12:00:00Z', y: 100 }, // Monday
+        { x: '2024-01-09T12:00:00Z', y: 150 }, // Tuesday
+        // Gap: missing 2024-01-10
+        { x: '2024-01-11T12:00:00Z', y: 120 }, // Thursday
+        { x: '2024-01-12T12:00:00Z', y: 180 }, // Friday
       ];
-      const { getByTestID } = render(
-        <Chart data={dataWithGaps} testID="chart" />
+      const { getByTestId } = render(
+        <Chart data={dataWithGaps} testID="chart" tradingHoursMode="extended" timeRange="ALL" />
       );
-      expect(getByTestID('chart')).toBeTruthy();
+      expect(getByTestId('chart')).toBeTruthy();
     });
   });
 });

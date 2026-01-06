@@ -54,6 +54,62 @@ export interface ChartProps {
 
 const screenWidth = Dimensions.get('window').width;
 
+// Helper function to check if a date is a trading day (weekday) in Eastern Time
+// Also excludes common market holidays
+function isTradingDayInET(timestamp: number): boolean {
+  // Use Intl.DateTimeFormat to get the day of week and date in Eastern Time
+  const date = new Date(timestamp);
+  const weekdayFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+  });
+  const dateFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    month: 'numeric',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  
+  const weekday = weekdayFormatter.format(date);
+  const dateStr = dateFormatter.format(date);
+  
+  // Check if weekday (Monday-Friday)
+  // formatter returns: 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'
+  if (weekday === 'Sat' || weekday === 'Sun') {
+    return false;
+  }
+  
+  // Check for common market holidays (fixed dates)
+  // Format: "M/D/YYYY" (e.g., "1/1/2024")
+  const [month, day, year] = dateStr.split('/').map(Number);
+  
+  // New Year's Day (Jan 1)
+  if (month === 1 && day === 1) {
+    return false;
+  }
+  
+  // Independence Day (July 4)
+  if (month === 7 && day === 4) {
+    return false;
+  }
+  
+  // Juneteenth (June 19)
+  if (month === 6 && day === 19) {
+    return false;
+  }
+  
+  // Christmas (Dec 25)
+  if (month === 12 && day === 25) {
+    return false;
+  }
+  
+  // Note: Other holidays like MLK Day, Presidents' Day, Memorial Day, Labor Day, Thanksgiving
+  // are variable dates and would require more complex logic. For now, we handle the fixed holidays.
+  // The backend should ideally filter these, but we add client-side filtering as a safeguard.
+  
+  return true;
+}
+
 // ============================================================================
 // INTERNAL MODULE A: useChartData()
 // Handles all data processing: downsampling, min/max, spacing, snap points
@@ -61,13 +117,98 @@ const screenWidth = Dimensions.get('window').width;
 function useChartData(
   data: { x: string | number; y: number }[],
   timeRange: TimeRange,
-  width: number
+  width: number,
+  tradingHoursMode?: TradingHoursMode
 ) {
+  // Debug: Log raw data received by Chart component
+  if (__DEV__ && data && data.length > 0) {
+    const firstPoint = data[0];
+    const lastPoint = data[data.length - 1];
+    const firstX = typeof firstPoint.x === 'string' ? new Date(firstPoint.x).getTime() : firstPoint.x;
+    const lastX = typeof lastPoint.x === 'string' ? new Date(lastPoint.x).getTime() : lastPoint.x;
+    console.log('[Chart] useChartData received data (first and last points):', {
+      firstPoint: {
+        x: firstPoint.x,
+        xType: typeof firstPoint.x,
+        xAsMs: firstX,
+        xAsDate: new Date(firstX).toISOString(),
+        xAsEST: new Date(firstX).toLocaleString('en-US', { timeZone: 'America/New_York' }),
+        y: firstPoint.y,
+      },
+      lastPoint: {
+        x: lastPoint.x,
+        xType: typeof lastPoint.x,
+        xAsMs: lastX,
+        xAsDate: new Date(lastX).toISOString(),
+        xAsEST: new Date(lastX).toLocaleString('en-US', { timeZone: 'America/New_York' }),
+        y: lastPoint.y,
+      },
+      totalPoints: data.length,
+    });
+  }
+  
+  // Filter input data FIRST to ensure snap points use correct timeRange data
+  // This prevents old data (from different timeRange) from affecting snap points
+  const filteredInputData = useMemo(() => {
+    let filtered = data;
+    
+    // First filter by timeRange
+    if (timeRange !== 'ALL') {
+      const now = Date.now();
+      let expectedStartTime: number;
+      switch (timeRange) {
+        case '1W':
+          expectedStartTime = now - (7 * 24 * 60 * 60 * 1000);
+          break;
+        case '1M':
+          expectedStartTime = now - (30 * 24 * 60 * 60 * 1000);
+          break;
+        case '3M':
+          expectedStartTime = now - (90 * 24 * 60 * 60 * 1000);
+          break;
+        case '1Y':
+          expectedStartTime = now - (365 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          break;
+      }
+      
+      filtered = filtered.filter(point => {
+        const timestamp = typeof point.x === 'string' ? new Date(point.x).getTime() : point.x;
+        return timestamp >= expectedStartTime;
+      });
+    }
+    
+    // For Market Hours mode, also filter out non-trading days
+    // This ensures no data from weekends or holidays (like Jan 1st) appears
+    // Market closes at 4:00 PM ET and opens at 9:30 AM ET on trading days only
+    if (tradingHoursMode === 'market') {
+      filtered = filtered.filter(point => {
+        const timestamp = typeof point.x === 'string' ? new Date(point.x).getTime() : point.x;
+        // Only include data from trading days (weekdays in ET)
+        return isTradingDayInET(timestamp);
+      });
+    }
+    
+    return filtered;
+  }, [data, timeRange, tradingHoursMode]);
+  
   // Downsample data for performance
-  const downsampledData = useMemo(() => downsampleData(data, timeRange), [data, timeRange]);
+  // Use filtered data to ensure snap points use correct timeRange
+  // For 1M market/extended hours, skip downsampling to preserve hourly intervals from backend
+  const downsampledData = useMemo(() => {
+    // For 1M market/extended hours, skip daily normalization to preserve hourly intervals
+    if (timeRange === '1M' && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
+      // Just return filtered data without normalization - backend already provides hourly intervals
+      return filteredInputData;
+    }
+    return downsampleData(filteredInputData, timeRange, tradingHoursMode);
+  }, [filteredInputData, timeRange, tradingHoursMode]);
 
   // Normalize x-axis spacing for even visual distribution (but keep original timestamps for tooltips)
   // This gives us: even spacing on x-axis + original timestamps for accuracy
+  // Use full downsampledData for visual chart (allows animation)
+  // For 1W market hours mode, compress x-axis to only show trading days (no gaps)
   const normalizedData = useMemo(() => {
     if (downsampledData.length <= 1) {
       // Return with originalTimestamp property for consistency
@@ -91,13 +232,88 @@ function useChartData(
       };
     });
     
+    // For 1W market hours mode, compress x-axis to only show trading days
+    if (timeRange === '1W' && tradingHoursMode === 'market') {
+      // Group data points by trading day (ET date)
+      const dayMap = new Map<string, typeof dataWithNumericX>();
+      
+      for (const point of dataWithNumericX) {
+        const date = new Date(point.originalTimestamp);
+        // Get ET date string (YYYY-MM-DD format)
+        const etDateStr = date.toLocaleDateString('en-US', {
+          timeZone: 'America/New_York',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        });
+        
+        // Convert to YYYY-MM-DD format for consistent sorting
+        const [month, day, year] = etDateStr.split('/');
+        const normalizedDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        
+        if (!dayMap.has(normalizedDateStr)) {
+          dayMap.set(normalizedDateStr, []);
+        }
+        dayMap.get(normalizedDateStr)!.push(point);
+      }
+      
+      // Sort days and create compressed x-axis
+      const sortedDays = Array.from(dayMap.keys()).sort();
+      const compressedData: { x: number; y: number; originalTimestamp: number }[] = [];
+      
+      // Calculate spacing: evenly distribute across all trading days
+      const totalTradingDays = sortedDays.length;
+      
+      if (totalTradingDays === 0) {
+        return dataWithNumericX;
+      }
+      
+      sortedDays.forEach((dayStr, dayIndex) => {
+        const dayPoints = dayMap.get(dayStr)!;
+        // Sort points within the day by timestamp
+        dayPoints.sort((a, b) => a.originalTimestamp - b.originalTimestamp);
+        
+        dayPoints.forEach((point, pointIndex) => {
+          // Calculate compressed x position: day index + normalized position within day
+          // This creates a continuous x-axis with no gaps between trading days
+          const normalizedPositionInDay = dayPoints.length > 1 
+            ? pointIndex / (dayPoints.length - 1)
+            : 0;
+          const compressedX = dayIndex + normalizedPositionInDay;
+          
+          compressedData.push({
+            x: compressedX, // Compressed position for visual display
+            y: point.y,
+            originalTimestamp: point.originalTimestamp, // Keep original timestamp for tooltips
+          });
+        });
+      });
+      
+      // Normalize compressed x to fit chart width (0 to totalTradingDays - 1)
+      const minCompressedX = 0;
+      const maxCompressedX = totalTradingDays - 1;
+      const compressedRange = maxCompressedX - minCompressedX;
+      
+      if (compressedRange > 0) {
+        // Scale to use full range but keep relative spacing
+        return compressedData.map(point => ({
+          x: point.x, // Already in compressed space (0 to totalTradingDays - 1)
+          y: point.y,
+          originalTimestamp: point.originalTimestamp,
+        }));
+      }
+      
+      return compressedData;
+    }
+    
+    // For other modes, use existing normalization logic
     // Find min and max timestamps
     const timestamps = dataWithNumericX.map(p => p.x);
     const minTime = Math.min(...timestamps);
     const maxTime = Math.max(...timestamps);
-    const timeRange = maxTime - minTime;
+    const timeSpan = maxTime - minTime;
     
-    if (timeRange === 0) {
+    if (timeSpan === 0) {
       return dataWithNumericX;
     }
     
@@ -106,7 +322,7 @@ function useChartData(
     const normalizedData: { x: number; y: number; originalTimestamp: number }[] = [];
     for (let i = 0; i < dataWithNumericX.length; i++) {
       // Calculate evenly spaced x-position
-      const normalizedX = minTime + (timeRange * i / (dataWithNumericX.length - 1));
+      const normalizedX = minTime + (timeSpan * i / (dataWithNumericX.length - 1));
       
       // Use original timestamp for this point (for tooltips/snapping)
       const originalTimestamp = dataWithNumericX[i].originalTimestamp;
@@ -119,7 +335,7 @@ function useChartData(
     }
     
     return normalizedData;
-  }, [downsampledData]);
+  }, [downsampledData, timeRange, tradingHoursMode]);
 
   // Convert to chart format (using normalized x-positions for even spacing)
   const chartData = useMemo(() => {
@@ -159,22 +375,17 @@ function useChartData(
 
   // Pre-compute snap points for drag interaction
   // Use normalized x-positions for even spacing, but original timestamps for display
+  // CRITICAL: snapPoints are computed from normalizedData and are NEVER affected by animations.
+  // Animations only create temporary interpolated data for visual paths - snapPoints remain unchanged.
+  // IMPORTANT: Data is already filtered before normalization, so all snap points have correct timestamps.
   const snapPoints = useMemo(() => {
     if (normalizedData.length === 0 || downsampledData.length === 0) {
       console.warn('[Chart] Missing data for snap points');
       return [];
     }
     
-    // Validation: Log data point counts for debugging
-    console.log('[Chart] Data point counts:', {
-      original: data.length,
-      downsampled: downsampledData.length,
-      normalized: normalizedData.length,
-      chartData: chartData.length,
-      timeRange,
-    });
-    
-    // Create snap points: normalized x for positioning, original timestamp for display
+    // Create snap points from normalized data
+    // Data is already filtered to current timeRange, so all timestamps are correct
     const snapPoints: { x: number; y: number; timestamp: number }[] = [];
     
     for (let i = 0; i < normalizedData.length; i++) {
@@ -182,25 +393,44 @@ function useChartData(
       
       snapPoints.push({
         x: normalizedPoint.x, // Normalized x-position (evenly spaced)
-        y: normalizedPoint.y,   // Original value
-        timestamp: normalizedPoint.originalTimestamp, // Original timestamp for tooltip display
+        y: normalizedPoint.y,
+        timestamp: normalizedPoint.originalTimestamp, // Original timestamp (already filtered to current timeRange)
       });
     }
     
-    // Log unique timestamps to see if we have variety
+    // Validation: Log data point counts for debugging
     const uniqueTimestamps = new Set(snapPoints.map(sp => sp.timestamp));
+    const firstTimestamp = snapPoints.length > 0 ? new Date(snapPoints[0].timestamp) : null;
+    const lastTimestamp = snapPoints.length > 0 ? new Date(snapPoints[snapPoints.length - 1].timestamp) : null;
+    const now = Date.now();
+    
+    console.log('[Chart] Data point counts:', {
+      original: data.length,
+      filtered: filteredInputData.length,
+      downsampled: downsampledData.length,
+      normalized: normalizedData.length,
+      chartData: chartData.length,
+      timeRange,
+    });
+    
     console.log('[Chart] Created snap points:', {
       count: snapPoints.length,
       uniqueTimestamps: uniqueTimestamps.size,
+      timeRange,
+      firstTimestamp: firstTimestamp?.toISOString(),
+      lastTimestamp: lastTimestamp?.toISOString(),
+      firstTimestampDaysAgo: firstTimestamp ? Math.round((now - firstTimestamp.getTime()) / (24 * 60 * 60 * 1000)) : null,
+      lastTimestampDaysAgo: lastTimestamp ? Math.round((now - lastTimestamp.getTime()) / (24 * 60 * 60 * 1000)) : null,
       firstFew: snapPoints.slice(0, 3).map((sp, idx) => ({ 
         index: idx, 
         timestamp: new Date(sp.timestamp).toISOString(),
         y: sp.y,
+        daysAgo: Math.round((now - sp.timestamp) / (24 * 60 * 60 * 1000)),
       })),
     });
     
     return snapPoints;
-  }, [normalizedData, downsampledData, data.length, timeRange, chartData.length]);
+  }, [normalizedData, downsampledData, data.length, filteredInputData.length, timeRange, chartData.length]);
 
   // Pre-compute time bounds for faster lookups (use normalized x-positions for spacing calculations)
   const timeBounds = useMemo(() => {
@@ -316,6 +546,8 @@ function useChartTransition(
   const oldChartDataForAnimation = useRef<{ value: number }[]>([]);
   const oldMinValueForAnimation = useRef<number>(0);
   const oldMaxValueForAnimation = useRef<number>(0);
+  // Track if we're waiting for new data after a timeRange/mode change
+  const pendingAnimationRef = useRef<{ timeRange: TimeRange; tradingHoursMode?: TradingHoursMode } | null>(null);
   
   // Check if we need to animate (timeRange or tradingHoursMode changed)
   useEffect(() => {
@@ -326,6 +558,31 @@ function useChartTransition(
     // Always process timeRange or tradingHoursMode changes, even if animation is in progress
     // This ensures animations fire when toggling rapidly between timeframes or modes
     if (timeRangeChanged || tradingHoursModeChanged || dataChanged) {
+      // If timeRange or tradingHoursMode changed but data hasn't changed yet (still loading),
+      // prepare for animation by storing current data and marking as pending
+      if ((timeRangeChanged || tradingHoursModeChanged) && !dataChanged && chartData.length > 0) {
+        // Store current data as "old" data for when new data arrives
+        // This ensures smooth animation when new data comes in
+        oldChartDataForAnimation.current = [...prevChartDataRef.current];
+        oldMinValueForAnimation.current = prevMinValueRef.current;
+        oldMaxValueForAnimation.current = prevMaxValueRef.current;
+        
+        // Mark that we have a pending animation waiting for new data
+        pendingAnimationRef.current = { timeRange, tradingHoursMode };
+        
+        // Update refs to track the change
+        prevTimeRangeRef.current = timeRange;
+        prevTradingHoursModeRef.current = tradingHoursMode;
+        // Don't update chartData ref yet - wait for new data
+        return; // Exit early, animation will trigger when new data arrives
+      }
+      
+      // If we have a pending animation and new data has arrived, trigger the animation
+      const hasPendingAnimation = pendingAnimationRef.current !== null;
+      if (hasPendingAnimation && dataChanged) {
+        // Clear pending flag - we're about to animate
+        pendingAnimationRef.current = null;
+      }
       // Store previous values BEFORE updating refs (for animation interpolation)
       const oldChartData = [...prevChartDataRef.current]; // Deep copy to preserve old data
       const oldMinValue = prevMinValueRef.current;
@@ -368,10 +625,18 @@ function useChartTransition(
       // ONLY animate on timeRange change, tradingHoursMode change, OR if data structure changed significantly
       // For auto-refreshes with same timeframe and mode, skip animation to prevent reset
       // This prevents the graph from resetting when data is refreshed but timeframe/mode is unchanged
-      const shouldAnimate = timeRangeChanged || tradingHoursModeChanged || (dataChanged && isSignificantChange);
+      // IMPORTANT: If we have a pending animation (timeRange/mode changed, waiting for data), animate when data arrives
+      const shouldAnimate = 
+        hasPendingAnimation || // We have a pending animation waiting for new data
+        timeRangeChanged || // timeRange changed (will animate with current/new data)
+        tradingHoursModeChanged || // tradingHoursMode changed (will animate with current/new data)
+        (dataChanged && isSignificantChange); // Significant data change (auto-refresh)
       
       if (shouldAnimate) {
         // Store old values for animation interpolation
+        // CRITICAL: We create DEEP COPIES of the data for animation.
+        // The original chartData, snapPoints, and all source data remain completely unchanged.
+        // Animation only affects visual display (SVG paths), never the underlying data.
         // IMPORTANT: Store the CURRENT displayed state (from animation if animating, or current if not)
         // This prevents flashing when interrupting an animation mid-way
         const currentAnimValue = (transitionAnim as any)._value ?? 1;
@@ -426,9 +691,10 @@ function useChartTransition(
         
         // Animate to 1 (show new data) with smooth easing (no bounce, no overshoot)
         // Using ease-in-out for predictable animation that never overshoots
+        // IMPORTANT: Animation duration is longer for timeframe/mode changes to make transitions more noticeable
         Animated.timing(transitionAnim, {
           toValue: 1,
-          duration: 200, // Faster animation for snappier timeframe switching
+          duration: timeRangeChanged || tradingHoursModeChanged ? 400 : 200, // Longer animation for timeframe/mode changes, shorter for data updates
           useNativeDriver: false, // Path strings can't use native driver
           easing: Easing.inOut(Easing.ease), // Smooth ease-in-out - guaranteed no overshoot
         }).start((finished) => {
@@ -468,6 +734,9 @@ function useChartTransition(
   }, [chartData, minValue, maxValue, timeRange, tradingHoursMode, transitionAnim]);
   
   // Generate interpolated paths with smooth interpolation
+  // CRITICAL: This function ONLY creates temporary interpolated data for visual display.
+  // It NEVER modifies the original chartData, snapPoints, or any source data.
+  // All interpolation is done in-memory for path generation only.
   const getInterpolatedPaths = useCallback((): { linePath: string; areaPath: string } => {
     const currentValue = Math.min(1, Math.max(0, (transitionAnim as any)._value ?? 1)); // Clamp to [0, 1]
     
@@ -476,16 +745,18 @@ function useChartTransition(
     
     // If animation is complete or no old data stored, use current data
     if (currentValue >= 0.9999 || oldChartDataForAnimation.current.length === 0) {
-      // Ensure we return the exact final state
+      // Ensure we return the exact final state using original data (no interpolation)
       return generateChartPath(chartData, width, height, minValue, maxValue, curved);
     }
     
     // Use stored old values for interpolation (not the refs which have been updated)
+    // These are deep copies stored specifically for animation - original data is never touched
     const oldChartData = oldChartDataForAnimation.current;
     const oldMinValue = oldMinValueForAnimation.current;
     const oldMaxValue = oldMaxValueForAnimation.current;
     
     // Normalize old and new data to same length for smooth interpolation
+    // This creates temporary normalized arrays for interpolation only
     const normalized = normalizeData(oldChartData, chartData);
     const normalizedOld = normalized.old;
     const normalizedNew = normalized.new;
@@ -496,10 +767,13 @@ function useChartTransition(
     const easedValue = currentValue;
     
     // Interpolate min/max values using stored old values with eased interpolation
+    // These are temporary values for path generation only
     const interpolatedMin = oldMinValue + (minValue - oldMinValue) * easedValue;
     const interpolatedMax = oldMaxValue + (maxValue - oldMaxValue) * easedValue;
     
     // Interpolate data points with eased interpolation for smoother transitions
+    // IMPORTANT: This creates a temporary array ONLY for path generation
+    // The original chartData, snapPoints, and all source data remain completely unchanged
     const interpolatedData: { value: number }[] = [];
     for (let i = 0; i < normalizedNew.length; i++) {
       const oldValue = normalizedOld[i]?.value ?? (normalizedOld.length > 0 ? normalizedOld[normalizedOld.length - 1]?.value : 0) ?? 0;
@@ -509,6 +783,8 @@ function useChartTransition(
     }
     
     // Generate path from interpolated data
+    // The interpolatedData array is temporary and only used for this path generation
+    // After this function returns, it can be garbage collected - original data is untouched
     return generateChartPath(interpolatedData, width, height, interpolatedMin, interpolatedMax, curved);
   }, [chartData, minValue, maxValue, width, height, curved, transitionAnim, normalizeData]);
   
@@ -623,13 +899,15 @@ function useChartDrag({
   
   // Find nearest snap point to a given x position
   // Returns both the x position and the index for haptic tracking
-  // Find nearest snap point based on normalized x-positions (evenly spaced)
+  // IMPORTANT: Use snapPointsRef.current to ensure we always use the latest filtered snap points
+  // This prevents using stale snap points when data changes (e.g., timeframe switch)
   const findNearestSnapPoint = useCallback((x: number): { x: number; index: number } | null => {
-    if (snapPoints.length === 0) {
+    const currentSnapPoints = snapPointsRef.current;
+    if (currentSnapPoints.length === 0) {
       console.warn('[Chart] findNearestSnapPoint: No snap points available');
       return null;
     }
-    if (snapPoints.length === 1) return { x: 0, index: 0 };
+    if (currentSnapPoints.length === 1) return { x: 0, index: 0 };
     
     // Clamp x to chart bounds
     const clampedX = Math.max(0, Math.min(x, width));
@@ -637,26 +915,26 @@ function useChartDrag({
     // Since snap points are evenly spaced (normalized x-positions), we can calculate directly
     const { minTime, maxTime } = timeBounds;
     const timeRange = maxTime - minTime;
-    const calculatedSpacing = timeRange > 0 ? width / (snapPoints.length - 1) : 0;
+    const calculatedSpacing = timeRange > 0 ? width / (currentSnapPoints.length - 1) : 0;
     
     // Calculate which snap point index this X position is closest to
     const targetIndex = Math.round(clampedX / calculatedSpacing);
-    const clampedIndex = Math.max(0, Math.min(targetIndex, snapPoints.length - 1));
+    const clampedIndex = Math.max(0, Math.min(targetIndex, currentSnapPoints.length - 1));
     
     // Calculate the actual X position for this snap point (using normalized x)
     const snappedX = clampedIndex * calculatedSpacing;
     
     // Debug logging (only in dev mode, throttled to avoid spam)
     if (__DEV__) {
-      const logKey = `snap_${snapPoints.length}_${clampedIndex}`;
+      const logKey = `snap_${currentSnapPoints.length}_${clampedIndex}`;
       if (!(findNearestSnapPoint as any).loggedIndices) {
         (findNearestSnapPoint as any).loggedIndices = new Set();
       }
       if (!(findNearestSnapPoint as any).loggedIndices.has(logKey)) {
         (findNearestSnapPoint as any).loggedIndices.add(logKey);
-        const snapPoint = snapPoints[clampedIndex];
+        const snapPoint = currentSnapPoints[clampedIndex];
         console.log('[Chart] findNearestSnapPoint:', {
-          snapPointsCount: snapPoints.length,
+          snapPointsCount: currentSnapPoints.length,
           width,
           calculatedSpacing,
           x,
@@ -670,7 +948,7 @@ function useChartDrag({
     }
     
     return { x: snappedX, index: clampedIndex };
-  }, [snapPoints, width, timeBounds]);
+  }, [width, timeBounds]); // Remove snapPoints from deps since we use ref
   
   // Calculate Y position along the curve at a given X position
   // For curved lines, we need to interpolate along the Bezier curve, not just use data point value
@@ -762,7 +1040,8 @@ function useChartDrag({
     const { x: snappedX, index: snappedIndex } = snapResult;
     
     // Get the snap point for tooltip and dot position
-    const snapPoint = snapPoints[snappedIndex];
+    // Use snapPointsRef.current to ensure we get the latest filtered snap points
+    const snapPoint = snapPointsRef.current[snappedIndex];
     if (!snapPoint) return;
     
     // Update current drag data for tooltip
@@ -827,7 +1106,8 @@ function useChartDrag({
         if (snapResult === null) return;
         
         const { x: finalX, index: snappedIndex } = snapResult;
-        const snapPoint = snapPoints[snappedIndex];
+        // Use snapPointsRef.current to ensure we get the latest filtered snap points
+        const snapPoint = snapPointsRef.current[snappedIndex];
         if (!snapPoint) return;
         
         // Update current drag data for tooltip
@@ -910,7 +1190,8 @@ function useChartDrag({
     if (snapResult === null) return;
     
     const { x: finalX, index: snappedIndex } = snapResult;
-    const snapPoint = snapPoints[snappedIndex];
+    // Use snapPointsRef.current to ensure we get the latest filtered snap points
+    const snapPoint = snapPointsRef.current[snappedIndex];
     if (!snapPoint) return;
     
     // Update current drag data for tooltip
@@ -1029,12 +1310,19 @@ function useChartDrag({
 // proportional points for current day based on elapsed time
 function normalizeDailyData(
   data: { x: string | number; y: number }[],
-  timeRange: TimeRange
+  timeRange: TimeRange,
+  tradingHoursMode?: TradingHoursMode
 ): { x: string | number; y: number }[] | null {
   // Only apply daily normalization for shorter timeframes that would have intraday data
   // For longer timeframes, the backend already aggregates to daily buckets
   if (timeRange !== '1W' && timeRange !== '1M') {
     return null; // Not a daily chart, return null to skip normalization
+  }
+  
+  // Skip normalization for 1M market/extended hours - backend already provides hourly intervals
+  // We want to preserve these exact hourly timestamps for the tooltip
+  if (timeRange === '1M' && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
+    return null; // Skip - preserve hourly intervals from backend
   }
 
   if (data.length === 0) {
@@ -1164,7 +1452,7 @@ function normalizeDailyData(
 // Downsample data for performance - extremely aggressive for large timeframes
 // Coinbase/Stocks apps typically use 50-60 points max for smooth performance
 // Export for testing
-export const downsampleData = (data: { x: string | number; y: number }[], timeRange?: TimeRange): { x: string | number; y: number }[] => {
+export const downsampleData = (data: { x: string | number; y: number }[], timeRange?: TimeRange, tradingHoursMode?: TradingHoursMode): { x: string | number; y: number }[] => {
   // "Equalizer Hack" (Suggestion #1): Always return exactly TARGET_POINTS for smooth morphing
   // This ensures all timeframes have the same number of points, allowing smooth path interpolation
   const TARGET_POINTS = 60; // Constant points for all timeframes - enables smooth transitions
@@ -1177,7 +1465,7 @@ export const downsampleData = (data: { x: string | number; y: number }[], timeRa
   // This ensures same number of points per day for historical days,
   // and proportional points for current day
   if (timeRange) {
-    const dailyNormalized = normalizeDailyData(data, timeRange);
+    const dailyNormalized = normalizeDailyData(data, timeRange, tradingHoursMode);
     if (dailyNormalized !== null) {
       // Daily normalization was applied, use that result
       // For 1W charts, we allow more points (200) to show daily detail
@@ -1548,90 +1836,49 @@ const DragTooltip = React.memo(({
           color: Colors.textSecondary,
         }}>
           {(() => {
-            // Timestamp is milliseconds since epoch (timezone-agnostic)
-            // Create Date object - JavaScript automatically handles timezone conversion
-            const date = new Date(timestamp);
+            // Use JavaScript's built-in timezone conversion
+            // The timestamp should be in UTC milliseconds
+            let date = new Date(timestamp);
             
-            // Get timezone info
-            const timezoneInfo = Intl.DateTimeFormat().resolvedOptions();
-            const offsetMinutes = date.getTimezoneOffset();
-            const offsetHours = Math.abs(offsetMinutes) / 60;
-            const offsetSign = offsetMinutes < 0 ? '+' : '-';
-            
-            // Get UTC time components
-            const utcHours = date.getUTCHours();
-            const utcMinutes = date.getUTCMinutes();
-            
-            // ALWAYS manually convert UTC to local time
-            // React Native's getHours() may not work correctly in all cases
-            // Manual conversion: local = UTC - offset
-            // offsetMinutes is positive when behind UTC (e.g., EST is +300 = 5 hours behind UTC)
-            // Example: UTC 3:49 AM, offset +300 → local = 3:49 - 300min = 22:49 previous day = 10:49 PM previous day
-            // But we want: UTC 3:49 AM, EST (UTC-5) → local = 3:49 - 5 hours = 22:49 previous day = 10:49 PM previous day
-            // Wait, that's still wrong. Let me recalculate:
-            // If UTC is 3:49 AM and we're EST (UTC-5), local should be 10:49 PM the previous day
-            // But the user says device is 5:48 PM, so UTC should be 10:48 PM (5:48 PM + 5 hours)
-            // So if getUTCHours() is 3, that means the timestamp represents 3:49 AM UTC
-            // Local time in EST would be 3:49 AM - 5 hours = 10:49 PM previous day
-            // But the user wants to see 5:48 PM, which means the timestamp should represent 10:48 PM UTC
-            
-            // ALWAYS manually convert UTC to local time
-            // React Native's Date methods may not work correctly - force manual conversion
-            // Manual conversion: local = UTC - offset
-            // offsetMinutes is positive when behind UTC (e.g., EST is +300 = 5 hours behind UTC)
-            const totalLocalMinutes = (utcHours * 60 + utcMinutes) - offsetMinutes;
-            let localHours = Math.floor((totalLocalMinutes + 24 * 60) % (24 * 60) / 60);
-            let localMinutes = (totalLocalMinutes + 24 * 60) % 60;
-            
-            // Calculate local day and month (handle day rollover from timezone conversion)
-            let localDay = date.getUTCDate();
-            let localMonth = date.getUTCMonth();
-            const utcDay = date.getUTCDate();
-            const utcMonth = date.getUTCMonth();
-            
-            // If local time rolled back to previous day (negative totalLocalMinutes)
-            if (totalLocalMinutes < 0) {
-              localDay = utcDay - 1;
-              if (localDay < 1) {
-                localMonth = utcMonth - 1;
-                if (localMonth < 0) {
-                  localMonth = 11;
-                }
-                // Approximate days in previous month (simplified - assumes 30)
-                localDay = 30;
-              }
-            } else if (totalLocalMinutes >= 24 * 60) {
-              // Rolled forward to next day
-              localDay = utcDay + 1;
-              if (localDay > 31) {
-                localDay = 1;
-                localMonth = (utcMonth + 1) % 12;
-              }
-            }
-            
-            // Log timezone info every time (for debugging)
-            console.log('🌍 [Chart] Timestamp Conversion:', {
-              timestamp: timestamp,
-              timeZone: timezoneInfo.timeZone,
-              offsetMinutes: offsetMinutes,
-              offsetHours: `${offsetSign}${offsetHours}`,
-              UTC: `${utcHours}:${utcMinutes.toString().padStart(2, '0')} (day ${utcDay})`,
-              getHours_returns: `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`,
-              Manual_Local: `${localHours}:${localMinutes.toString().padStart(2, '0')} (day ${localDay})`,
-              dateToString: date.toString(),
+            // Format as "Mon 9:30 AM" or "Jan 15, 9:30 AM" in user's device timezone
+            // Don't specify timeZone - let JavaScript use the system's local timezone
+            // This ensures we always show the time in the user's actual timezone
+            const formatter = new Intl.DateTimeFormat('en-US', {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+              // Omit timeZone to use system's local timezone automatically
             });
             
-            // Format month name
-            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const month = monthNames[localMonth];
+            let timeString = formatter.format(date);
             
-            // Format time
-            const ampm = localHours >= 12 ? 'PM' : 'AM';
-            const displayHours = localHours % 12 || 12;
-            const displayMinutes = localMinutes.toString().padStart(2, '0');
-            
-            // Format: "Jan 15, 2:30 PM" (in local timezone)
-            let timeString = `${month} ${localDay}, ${displayHours}:${displayMinutes} ${ampm}`;
+            // Debug: Log timestamp conversion (only in dev mode, throttled)
+            if (__DEV__) {
+              const logKey = `ts_${Math.floor(timestamp / 60000)}`; // Log once per minute
+              if (!(DragTooltip as any).loggedTimestamps) {
+                (DragTooltip as any).loggedTimestamps = new Set();
+              }
+              if (!(DragTooltip as any).loggedTimestamps.has(logKey)) {
+                (DragTooltip as any).loggedTimestamps.add(logKey);
+                const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const utcStr = date.toISOString();
+                const now = Date.now();
+                const timeDiff = timestamp - now;
+                const hoursDiff = timeDiff / (1000 * 60 * 60);
+                console.log('[Chart] Timestamp conversion:', {
+                  timestamp,
+                  utc: utcStr,
+                  systemTimezone: systemTz,
+                  localDisplay: timeString,
+                  currentTime: new Date(now).toISOString(),
+                  timeDifferenceHours: hoursDiff.toFixed(2),
+                  note: hoursDiff > 4 ? 'WARNING: Timestamp is more than 4 hours ahead of current time - backend may be sending incorrect timestamps' : 'OK',
+                });
+              }
+            }
             
             // Add indicator for extended hours mode
             if (tradingHoursMode === 'extended') {
@@ -1999,7 +2246,7 @@ function Chart({
   // ============================================================================
   // Use extracted hooks for data processing and drag interaction
   // ============================================================================
-  const chartDataModule = useChartData(data, timeRange, width);
+  const chartDataModule = useChartData(data, timeRange, width, tradingHoursMode);
   const {
     chartData,
     minValue,
@@ -2028,6 +2275,9 @@ function Chart({
   
   const curved = finalConfig.curved ?? true;
   
+  // CRITICAL: snapPoints, chartData, and all source data are passed to dragModule unchanged.
+  // Animations only affect visual display (SVG paths via getInterpolatedPaths).
+  // All drag interactions use the original, unmodified data - timestamps and values are always accurate.
   const dragModule = useChartDrag({
     width,
     height,

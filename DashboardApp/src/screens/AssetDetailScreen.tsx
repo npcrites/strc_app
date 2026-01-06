@@ -57,6 +57,11 @@ export default function AssetDetailScreen() {
   const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
   const [tradingHoursMode, setTradingHoursMode] = useState<TradingHoursMode>('market');
   const [error, setError] = useState<string | null>(null);
+  // Track previous timeRange to detect changes
+  const previousTimeRangeRef = useRef<TimeRange>('1Y');
+  // Preserve previous data only when switching trading hours modes (same timeRange)
+  // When timeRange changes, don't preserve data to ensure snap points use correct data
+  const previousDataRef = useRef<AssetPriceHistory | null>(null);
   const previousPriceRef = useRef<number | null>(null);
   const previousDollarsDigitsRef = useRef<number[] | null>(null);
   const previousCentsTensRef = useRef<number | null>(null);
@@ -80,7 +85,15 @@ export default function AssetDetailScreen() {
 
     const fetchData = async () => {
       try {
+        // Detect if timeRange changed (different from tradingHoursMode change)
+        const timeRangeChanged = previousTimeRangeRef.current !== timeRange;
+        const isInitialLoad = !data;
+        
+        // Only show loading spinner on initial load (when we have no data)
+        // For timeframe/mode changes, preserve old data to enable smooth animations
+        if (isInitialLoad) {
         setLoading(true);
+        }
         setError(null);
         
         // Always fetch fresh data when trading hours mode changes
@@ -88,10 +101,23 @@ export default function AssetDetailScreen() {
         // so we invalidate it to ensure we get the correct data
         invalidateChartCache(ticker);
         
+        // IMPORTANT: Only preserve previous data when switching trading hours modes (same timeRange)
+        // When timeRange changes, don't preserve data to ensure snap points use correct data for new timeRange
+        // This prevents snap points from showing timestamps from the old timeRange
+        if (data && !timeRangeChanged) {
+          // Same timeRange, only tradingHoursMode changed - preserve for animation
+          previousDataRef.current = data;
+        } else if (timeRangeChanged) {
+          // TimeRange changed - clear previous data to ensure snap points use correct data
+          previousDataRef.current = null;
+        }
+        
         // Use cached service for efficient data fetching
         const response = await fetchAssetPriceHistory(ticker, timeRange, token, tradingHoursMode);
         
+        // Update data - this will trigger the Chart animation
         setData(response);
+        previousTimeRangeRef.current = timeRange;
       } catch (err: any) {
         console.error('Error fetching asset price history:', err);
         setError(err.message || 'Failed to load asset data');
@@ -105,13 +131,64 @@ export default function AssetDetailScreen() {
 
   // Convert price history to chart format using optimized transformation
   // Uses efficient single-pass transformation for better performance
+  // IMPORTANT: Preserve data during loading to enable smooth animations
+  // The Chart component will animate from old data to new data
   const chartData = useMemo(() => {
-    if (!data) {
-      return [];
+    // Debug: Log raw API response
+    if (__DEV__ && data && data.series && data.series.length > 0) {
+      const firstPoint = data.series[0];
+      const lastPoint = data.series[data.series.length - 1];
+      console.log('[AssetDetailScreen] Raw API data (first and last points):', {
+        firstPoint: {
+          timestamp: firstPoint.timestamp,
+          price: firstPoint.price,
+          timestampType: typeof firstPoint.timestamp,
+        },
+        lastPoint: {
+          timestamp: lastPoint.timestamp,
+          price: lastPoint.price,
+          timestampType: typeof lastPoint.timestamp,
+        },
+        totalPoints: data.series.length,
+      });
     }
     
-    return transformToChartData(data);
-  }, [data]);
+    // If we have current data, use it
+    if (data) {
+      const transformed = transformToChartData(data);
+      
+      // Debug: Log transformed data
+      if (__DEV__ && transformed.length > 0) {
+        const firstTransformed = transformed[0];
+        const lastTransformed = transformed[transformed.length - 1];
+        console.log('[AssetDetailScreen] Transformed chart data (first and last points):', {
+          firstPoint: {
+            x: firstTransformed.x,
+            xAsDate: new Date(firstTransformed.x).toISOString(),
+            xAsEST: new Date(firstTransformed.x).toLocaleString('en-US', { timeZone: 'America/New_York' }),
+            y: firstTransformed.y,
+          },
+          lastPoint: {
+            x: lastTransformed.x,
+            xAsDate: new Date(lastTransformed.x).toISOString(),
+            xAsEST: new Date(lastTransformed.x).toLocaleString('en-US', { timeZone: 'America/New_York' }),
+            y: lastTransformed.y,
+          },
+        });
+      }
+      
+      return transformed;
+    }
+    
+    // If loading and we have previous data, use previous data for animation
+    // This allows the Chart to animate from old to new data
+    if (loading && previousDataRef.current) {
+      return transformToChartData(previousDataRef.current);
+    }
+    
+    // No data available
+    return [];
+  }, [data, loading]);
 
   // Calculate price values (safe defaults if no data)
   const currentPrice = data?.current_price || (data?.series && data.series.length > 0 ? data.series[data.series.length - 1].price : 0);
@@ -211,7 +288,9 @@ export default function AssetDetailScreen() {
     };
   }, [currentPrice, colorOpacityAnim, leftmostChangePosition, isIncrease, data]);
 
-  if (loading) {
+  // Only show loading spinner on initial load (when we have no data at all)
+  // For timeframe/mode changes, we preserve old data and show animation instead
+  if (loading && !data && !previousDataRef.current) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <StatusBar barStyle="light-content" />

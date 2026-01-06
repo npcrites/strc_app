@@ -79,11 +79,44 @@ export function transformToChartData(data: AssetPriceHistory): ChartDataPoint[] 
   const chartData: ChartDataPoint[] = new Array(data.series.length);
 
   // Single pass transformation - convert timestamps to milliseconds
-  // Milliseconds are timezone-agnostic and efficient for chart libraries
+  // CRITICAL: Backend sends UTC timestamps, but if they're serialized without timezone info,
+  // JavaScript's new Date() will interpret them as LOCAL time, causing a 5-hour offset in EST.
+  // We need to explicitly treat them as UTC.
   for (let i = 0; i < data.series.length; i++) {
     const point = data.series[i];
+    
+    // Parse timestamp - if it doesn't end with 'Z' or timezone offset, treat it as UTC
+    let timestampMs: number;
+    const rawTimestamp = point.timestamp;
+    
+    // Check if timestamp has timezone info
+    if (rawTimestamp.endsWith('Z') || rawTimestamp.includes('+') || rawTimestamp.includes('-', 10)) {
+      // Has timezone info, parse normally
+      timestampMs = new Date(rawTimestamp).getTime();
+    } else {
+      // No timezone info - backend sends UTC but without 'Z' suffix
+      // Append 'Z' to explicitly mark as UTC
+      const utcTimestamp = rawTimestamp.endsWith('Z') ? rawTimestamp : rawTimestamp + 'Z';
+      timestampMs = new Date(utcTimestamp).getTime();
+    }
+    
+    // Debug: Log raw timestamp from API (only for first and last points)
+    if (__DEV__ && (i === 0 || i === data.series.length - 1)) {
+      const dateObj = new Date(timestampMs);
+      const utcStr = dateObj.toISOString();
+      const localStr = dateObj.toLocaleString('en-US', { timeZone: 'America/New_York' });
+      console.log(`[ChartData] transformToChartData point ${i}:`, {
+        rawTimestamp,
+        hasTimezone: rawTimestamp.endsWith('Z') || rawTimestamp.includes('+') || rawTimestamp.includes('-', 10),
+        timestampMs,
+        utc: utcStr,
+        est: localStr,
+        note: i === 0 ? 'first point' : 'last point',
+      });
+    }
+    
     chartData[i] = {
-      x: new Date(point.timestamp).getTime(),
+      x: timestampMs,
       y: point.price,
       value: point.value,
     };
