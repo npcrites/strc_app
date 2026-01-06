@@ -428,11 +428,24 @@ def _generate_5minute_extended_hours_snapshots(
     # Iterate through all calendar days in range
     current_date = start_date_et
     while current_date <= end_date_et:
-        # Generate 5-minute intervals for the entire day (00:00 - 23:55)
-        # 24 hours * 12 intervals per hour = 288 intervals per day
+        # Generate 5-minute intervals for the day
+        # BUT: For the current day (end_date_et), only generate up to current time
         interval_times = []
         current_time = time(0, 0)
-        while current_time < time(23, 59, 59):
+        
+        # Determine the end time for interval generation
+        if current_date == end_date_et:
+            # For the current day, only generate intervals up to current time
+            end_time_et = market_hours_service._to_et(end_date)
+            end_time = end_time_et.time()
+            # Round down to the nearest 5-minute interval
+            end_minutes = (end_time.minute // 5) * 5
+            end_time_limit = time(end_time.hour, end_minutes)
+        else:
+            # For historical days, generate full day (00:00 - 23:55)
+            end_time_limit = time(23, 55)
+        
+        while current_time <= end_time_limit:
             interval_times.append(current_time)
             # Add 5 minutes
             minutes = current_time.minute + 5
@@ -1899,15 +1912,19 @@ async def get_asset_price_history(
         )
         
         # Apply time range filter (all timestamps in UTC)
-        # For 3M market hours, we need to query back a bit further to ensure we have data
+        # For 3M and 1Y market hours, we need to query back a bit further to ensure we have data
         # for backfilling missing trading days
         query_start_date = tr.start_date
-        if time_range == "3M" and trading_hours_mode == "market" and tr.start_date:
+        if (time_range == "3M" or time_range == "1Y") and trading_hours_mode == "market" and tr.start_date:
             # Query back an additional 10 trading days to ensure we have data for backfilling
             # This ensures we can get the previous trading day's closing price for missing days
-            query_start_date = market_hours_service.get_n_trading_days_back(70, tr.end_date)
+            extra_days = 10
+            if time_range == "3M":
+                query_start_date = market_hours_service.get_n_trading_days_back(70, tr.end_date)
+            elif time_range == "1Y":
+                query_start_date = market_hours_service.get_n_trading_days_back(262, tr.end_date)  # 252 + 10
             logger.info(
-                f"3M market hours: Querying back to {query_start_date} (10 extra trading days) "
+                f"{time_range} market hours: Querying back to {query_start_date} ({extra_days} extra trading days) "
                 f"to ensure data for backfilling missing days"
             )
         
@@ -2085,14 +2102,14 @@ async def get_asset_price_history(
                         f"(from {len(snapshots)} total) for {ticker_upper} {time_range} market hours"
                     )
                     
-                    # Generate exact interval snapshots (3-hour for 1M, daily for 3M, hourly for other ranges)
+                    # Generate exact interval snapshots (3-hour for 1M, daily for 3M and 1Y, hourly for other ranges)
                     if time_range == "1M":
                         snapshots = _generate_3hour_market_hours_snapshots(filtered_snapshots, market_hours_service)
                         logger.info(
                             f"Generated {len(snapshots)} 3-hour interval snapshots for {ticker_upper} {time_range} market hours"
                         )
-                    elif time_range == "3M":
-                        # For 3M, pass ALL snapshots (not filtered) to ensure we have data for backfilling
+                    elif time_range == "3M" or time_range == "1Y":
+                        # For 3M and 1Y, pass ALL snapshots (not filtered) to ensure we have data for backfilling
                         # The daily function will filter to trading days and find market close snapshots
                         # We need all snapshots to properly backfill missing trading days
                         snapshots = _generate_daily_market_hours_snapshots(
@@ -2140,8 +2157,18 @@ async def get_asset_price_history(
                     logger.info(
                         f"Generated {len(snapshots)} daily snapshots for {ticker_upper} 3M extended hours"
                     )
+                elif time_range == "1Y":
+                    # For 1Y time range, generate exact daily snapshots for all calendar days
+                    # Generate daily snapshots for extended hours (all days)
+                    snapshots = _generate_daily_extended_hours_snapshots(
+                        snapshots, tr.start_date, tr.end_date, market_hours_service
+                    )
+                    
+                    logger.info(
+                        f"Generated {len(snapshots)} daily snapshots for {ticker_upper} 1Y extended hours"
+                    )
                 else:
-                    # For other time ranges (1Y, ALL), use existing normalization logic
+                    # For other time ranges (ALL), use existing normalization logic
                     # For extended hours mode, fill in missing calendar days with previous trading day's closing price
                     # This ensures holidays and weekends show on the chart with the actual closing price
                     from datetime import timedelta

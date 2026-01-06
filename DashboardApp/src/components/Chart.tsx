@@ -197,8 +197,8 @@ function useChartData(
   // Use filtered data to ensure snap points use correct timeRange
   // For 1M and 3M market/extended hours, skip downsampling to preserve intervals from backend
   const downsampledData = useMemo(() => {
-    // For 1M and 3M market/extended hours, skip daily normalization to preserve intervals from backend
-    if ((timeRange === '1M' || timeRange === '3M') && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
+    // For 1M, 3M, and 1Y market/extended hours, skip daily normalization to preserve intervals from backend
+    if ((timeRange === '1M' || timeRange === '3M' || timeRange === '1Y') && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
       // Just return filtered data without normalization - backend already provides correct intervals
       return filteredInputData;
     }
@@ -1313,9 +1313,9 @@ function normalizeDailyData(
   timeRange: TimeRange,
   tradingHoursMode?: TradingHoursMode
 ): { x: string | number; y: number }[] | null {
-  // Skip normalization for 1M and 3M market/extended hours - backend already provides correct intervals
+  // Skip normalization for 1M, 3M, and 1Y market/extended hours - backend already provides correct intervals
   // We want to preserve these exact timestamps for the tooltip
-  if ((timeRange === '1M' || timeRange === '3M') && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
+  if ((timeRange === '1M' || timeRange === '3M' || timeRange === '1Y') && (tradingHoursMode === 'market' || tradingHoursMode === 'extended')) {
     return null; // Skip - preserve intervals from backend
   }
   
