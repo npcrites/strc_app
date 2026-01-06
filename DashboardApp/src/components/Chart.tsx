@@ -1025,6 +1025,142 @@ function useChartDrag({
   };
 }
 
+// Normalize daily data: same number of points per day for historical days,
+// proportional points for current day based on elapsed time
+function normalizeDailyData(
+  data: { x: string | number; y: number }[],
+  timeRange: TimeRange
+): { x: string | number; y: number }[] | null {
+  // Only apply daily normalization for shorter timeframes that would have intraday data
+  // For longer timeframes, the backend already aggregates to daily buckets
+  if (timeRange !== '1W' && timeRange !== '1M') {
+    return null; // Not a daily chart, return null to skip normalization
+  }
+
+  if (data.length === 0) {
+    return null;
+  }
+
+  // Convert all x values to timestamps
+  const dataWithTimestamps = data.map(point => ({
+    x: typeof point.x === 'string' ? new Date(point.x).getTime() : point.x,
+    y: point.y,
+  }));
+
+  // Group data points by day (using UTC day boundaries for consistency)
+  const pointsByDay = new Map<string, typeof dataWithTimestamps>();
+  
+  for (const point of dataWithTimestamps) {
+    const date = new Date(point.x);
+    // Use UTC date string as key (YYYY-MM-DD)
+    const dayKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+    
+    if (!pointsByDay.has(dayKey)) {
+      pointsByDay.set(dayKey, []);
+    }
+    pointsByDay.get(dayKey)!.push(point);
+  }
+
+  // Get current day in UTC
+  const now = new Date();
+  const currentDayKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+
+  // Determine normalized points per day
+  // For a full trading day, we want a consistent number of points
+  // Let's use 60 points per day as the target (same as TARGET_POINTS in downsampleData)
+  const TARGET_POINTS_PER_DAY = 60;
+
+  const normalizedData: { x: string | number; y: number }[] = [];
+  const sortedDays = Array.from(pointsByDay.keys()).sort();
+
+  for (const dayKey of sortedDays) {
+    const dayPoints = pointsByDay.get(dayKey)!;
+    
+    if (dayKey === currentDayKey) {
+      // Current day: normalize proportionally based on how much of the day has passed
+      // Calculate what portion of the day has elapsed
+      const dayStart = new Date(dayKey + 'T00:00:00Z').getTime();
+      const dayEnd = new Date(dayKey + 'T23:59:59Z').getTime();
+      const dayDuration = dayEnd - dayStart;
+      const elapsed = now.getTime() - dayStart;
+      
+      // Calculate proportional target points (at least 1, at most TARGET_POINTS_PER_DAY)
+      const proportionalTarget = Math.max(
+        1,
+        Math.min(
+          TARGET_POINTS_PER_DAY,
+          Math.round((elapsed / dayDuration) * TARGET_POINTS_PER_DAY)
+        )
+      );
+
+      // Normalize current day to proportional target
+      if (dayPoints.length <= proportionalTarget) {
+        // If we have fewer or equal points than target, use all points
+        normalizedData.push(...dayPoints.map(p => ({ x: p.x, y: p.y })));
+      } else {
+        // Downsample to proportional target
+        const step = dayPoints.length / proportionalTarget;
+        for (let i = 0; i < proportionalTarget; i++) {
+          const index = Math.round(i * step);
+          const clampedIndex = Math.min(index, dayPoints.length - 1);
+          normalizedData.push({
+            x: dayPoints[clampedIndex].x,
+            y: dayPoints[clampedIndex].y,
+          });
+        }
+      }
+    } else {
+      // Historical day: normalize to full TARGET_POINTS_PER_DAY
+      if (dayPoints.length <= TARGET_POINTS_PER_DAY) {
+        // If we have fewer points, interpolate to reach TARGET_POINTS_PER_DAY
+        for (let i = 0; i < TARGET_POINTS_PER_DAY; i++) {
+          const ratio = dayPoints.length > 1 ? (i / (TARGET_POINTS_PER_DAY - 1)) * (dayPoints.length - 1) : 0;
+          const lowerIndex = Math.floor(ratio);
+          const upperIndex = Math.min(Math.ceil(ratio), dayPoints.length - 1);
+          const fraction = ratio - lowerIndex;
+          
+          const lowerPoint = dayPoints[lowerIndex];
+          const upperPoint = dayPoints[upperIndex];
+          
+          // Interpolate y value
+          const interpolatedY = lowerPoint.y + (upperPoint.y - lowerPoint.y) * fraction;
+          
+          // For x, use the timestamp at the normalized position within the day
+          const dayStart = new Date(dayKey + 'T00:00:00Z').getTime();
+          const dayEnd = new Date(dayKey + 'T23:59:59Z').getTime();
+          const dayDuration = dayEnd - dayStart;
+          const normalizedX = dayStart + (dayDuration * i / (TARGET_POINTS_PER_DAY - 1));
+          
+          normalizedData.push({
+            x: normalizedX,
+            y: interpolatedY,
+          });
+        }
+      } else {
+        // Downsample to TARGET_POINTS_PER_DAY
+        const step = dayPoints.length / TARGET_POINTS_PER_DAY;
+        for (let i = 0; i < TARGET_POINTS_PER_DAY; i++) {
+          const index = Math.round(i * step);
+          const clampedIndex = Math.min(index, dayPoints.length - 1);
+          normalizedData.push({
+            x: dayPoints[clampedIndex].x,
+            y: dayPoints[clampedIndex].y,
+          });
+        }
+      }
+    }
+  }
+
+  // Sort by timestamp to ensure correct order
+  normalizedData.sort((a, b) => {
+    const aTime = typeof a.x === 'string' ? new Date(a.x).getTime() : a.x;
+    const bTime = typeof b.x === 'string' ? new Date(b.x).getTime() : b.x;
+    return aTime - bTime;
+  });
+
+  return normalizedData;
+}
+
 // Downsample data for performance - extremely aggressive for large timeframes
 // Coinbase/Stocks apps typically use 50-60 points max for smooth performance
 // Export for testing
@@ -1035,6 +1171,49 @@ export const downsampleData = (data: { x: string | number; y: number }[], timeRa
   
   if (data.length === 0) {
     return data;
+  }
+
+  // Apply daily normalization first for daily charts (1W, 1M)
+  // This ensures same number of points per day for historical days,
+  // and proportional points for current day
+  if (timeRange) {
+    const dailyNormalized = normalizeDailyData(data, timeRange);
+    if (dailyNormalized !== null) {
+      // Daily normalization was applied, use that result
+      // For 1W charts, we allow more points (200) to show daily detail
+      // For 1M charts, we use the standard TARGET_POINTS (60)
+      const maxPointsForRange = timeRange === '1W' ? 200 : TARGET_POINTS;
+      const dataToProcess = dailyNormalized;
+      
+      // If the normalized daily data exceeds the max for this range, apply additional downsampling
+      if (dataToProcess.length > maxPointsForRange) {
+        // For daily charts, we want to preserve the per-day structure
+        // So we'll downsample proportionally across all days
+        const step = dataToProcess.length / maxPointsForRange;
+        const result: { x: string | number; y: number }[] = [];
+        
+        // Always include first point
+        result.push(dataToProcess[0]);
+        
+        // Sample points evenly
+        for (let i = 1; i < maxPointsForRange - 1; i++) {
+          const index = Math.round(i * step);
+          if (index < dataToProcess.length) {
+            result.push(dataToProcess[index]);
+          }
+        }
+        
+        // Always include last point
+        if (dataToProcess.length > 1) {
+          result.push(dataToProcess[dataToProcess.length - 1]);
+        }
+        
+        return result;
+      }
+      
+      // If normalized data is within target, return it as-is
+      return dataToProcess;
+    }
   }
   
   if (data.length <= TARGET_POINTS) {
