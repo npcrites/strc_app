@@ -41,6 +41,92 @@ class AssetPriceHistory(BaseModel):
     series: List[PricePoint]
 
 
+def _fill_missing_days_for_extended_hours(
+    snapshots: List,
+    start_date: Optional[datetime],
+    end_date: datetime
+) -> List:
+    """
+    Fill in missing calendar days for extended hours mode.
+    
+    For holidays and weekends where no snapshots exist, creates synthetic
+    snapshots using the last known price (forward fill). This ensures all
+    calendar days appear on the chart in extended hours mode.
+    
+    Args:
+        snapshots: List of snapshot tuples/rows (timestamp, price_per_share, current_value)
+        start_date: Start of time range (None for ALL)
+        end_date: End of time range
+        
+    Returns:
+        List of snapshots with missing days filled in (as tuples)
+    """
+    if not snapshots:
+        return snapshots
+    
+    if start_date is None:
+        # For "ALL", don't fill - just return original snapshots
+        return snapshots
+    
+    # For extended hours, we want to keep ALL snapshots (not just one per day)
+    # But we need to track which dates have snapshots so we can fill missing days
+    # Create a set of dates that have snapshots
+    dates_with_snapshots = set()
+    for snap in snapshots:
+        # Access tuple by index: [0] = timestamp, [1] = price_per_share, [2] = current_value
+        snap_timestamp = snap[0]
+        snap_date = snap_timestamp.date() if isinstance(snap_timestamp, datetime) else snap_timestamp
+        dates_with_snapshots.add(snap_date)
+    
+    # Sort snapshots by timestamp to get first/last known prices for filling
+    sorted_snapshots = sorted(snapshots, key=lambda x: x[0])
+    first_snapshot = sorted_snapshots[0] if sorted_snapshots else None
+    last_snapshot = sorted_snapshots[-1] if sorted_snapshots else None
+    
+    # Start with all existing snapshots
+    filled_snapshots = list(snapshots)
+    
+    # For each missing calendar day, add a synthetic snapshot
+    # Use the last known price from the previous day (forward fill)
+    current_date = start_date.date()
+    end_date_obj = end_date.date()
+    
+    # Track the last known price/value for forward filling
+    last_known_price = last_snapshot[1] if last_snapshot else None
+    last_known_value = last_snapshot[2] if last_snapshot else None
+    
+    while current_date <= end_date_obj:
+        if current_date not in dates_with_snapshots:
+            # This day has no snapshots - create a synthetic one
+            # Use the last known price from previous days
+            if last_known_price is not None:
+                # Find the last snapshot before this date to get the price
+                # Look through existing snapshots to find the most recent one before this date
+                fill_price = last_known_price
+                fill_value = last_known_value
+                
+                # Check if there's a snapshot from a previous day
+                for snap in sorted_snapshots:
+                    snap_date = snap[0].date() if isinstance(snap[0], datetime) else snap[0]
+                    if snap_date < current_date:
+                        fill_price = snap[1]
+                        fill_value = snap[2]
+                    elif snap_date > current_date:
+                        break
+                
+                # Create synthetic snapshot at midnight for the missing day
+                synthetic_timestamp = datetime.combine(current_date, datetime.min.time())
+                synthetic_snapshot = (synthetic_timestamp, fill_price, fill_value)
+                filled_snapshots.append(synthetic_snapshot)
+        
+        current_date += timedelta(days=1)
+    
+    # Sort by timestamp to maintain chronological order
+    filled_snapshots.sort(key=lambda x: x[0])
+    
+    return filled_snapshots
+
+
 def _fetch_historical_prices_from_alpaca(
     ticker: str,
     start_date: Optional[datetime],
@@ -193,13 +279,26 @@ async def get_asset_price_history(
                 f"Adjusted time range for market hours: "
                 f"start={tr.start_date}, end={tr.end_date}"
             )
-        elif trading_hours_mode == "extended" and time_range == "1W":
-            # Extended hours mode: 1W = 5 calendar days (not 7)
+        elif trading_hours_mode == "extended":
+            # Extended hours mode: use calendar days instead of trading days
+            # This ensures we include weekends, holidays, and all hours (not just market hours)
             from datetime import timedelta
-            tr.start_date = tr.end_date - timedelta(days=5)
+            if time_range == "1W":
+                # 1W = 5 calendar days
+                tr.start_date = tr.end_date - timedelta(days=5)
+            elif time_range == "1M":
+                # 1M = 30 calendar days
+                tr.start_date = tr.end_date - timedelta(days=30)
+            elif time_range == "3M":
+                # 3M = 90 calendar days
+                tr.start_date = tr.end_date - timedelta(days=90)
+            elif time_range == "1Y":
+                # 1Y = 365 calendar days
+                tr.start_date = tr.end_date - timedelta(days=365)
+            # For "ALL", keep original start_date (None)
             logger.info(
-                f"Adjusted time range for extended hours (1W): "
-                f"start={tr.start_date}, end={tr.end_date} (5 calendar days)"
+                f"Adjusted time range for extended hours ({time_range}): "
+                f"start={tr.start_date}, end={tr.end_date} (calendar days - includes all hours/days)"
             )
         
         # Get current price
@@ -242,8 +341,9 @@ async def get_asset_price_history(
         
         # Log first and last snapshot timestamps for debugging
         if snapshots:
-            first_snapshot = snapshots[0].timestamp
-            last_snapshot = snapshots[-1].timestamp
+            # Snapshots are tuples: (timestamp, price_per_share, current_value)
+            first_snapshot = snapshots[0][0]
+            last_snapshot = snapshots[-1][0]
             logger.info(
                 f"Snapshot range: first={first_snapshot}, last={last_snapshot}"
             )
@@ -294,21 +394,36 @@ async def get_asset_price_history(
                 market_hours_service = MarketHoursService()
                 # Filter to only trading days during market hours
                 # This ensures we exclude weekends, holidays, and after-hours data
+                # Snapshots are tuples: (timestamp, price_per_share, current_value)
                 filtered_snapshots = [
                     snap for snap in snapshots
-                    if market_hours_service.is_market_open(snap.timestamp)
+                    if market_hours_service.is_market_open(snap[0])
                 ]
                 logger.info(
                     f"Filtered to {len(filtered_snapshots)} market hours snapshots "
                     f"(from {len(snapshots)} total) for {ticker_upper}"
                 )
                 snapshots = filtered_snapshots
+            elif trading_hours_mode == "extended":
+                # For extended hours mode, fill in missing calendar days with last known price
+                # This ensures holidays and weekends show on the chart with the last known price
+                from datetime import timedelta
+                filled_snapshots = _fill_missing_days_for_extended_hours(
+                    snapshots, tr.start_date, tr.end_date
+                )
+                logger.info(
+                    f"Extended hours mode: filled missing days - "
+                    f"{len(filled_snapshots)} total snapshots (from {len(snapshots)} original)"
+                )
+                snapshots = filled_snapshots
             
+            # Convert snapshots (tuples) to PricePoint objects
+            # Snapshots are tuples: (timestamp, price_per_share, current_value)
             series = [
                 PricePoint(
-                    timestamp=snap.timestamp,
-                    price=float(snap.price_per_share),
-                    value=float(snap.current_value) if snap.current_value else None
+                    timestamp=snap[0],  # timestamp
+                    price=float(snap[1]),  # price_per_share
+                    value=float(snap[2]) if snap[2] else None  # current_value
                 )
                 for snap in snapshots
             ]
@@ -318,29 +433,40 @@ async def get_asset_price_history(
             logger.info(f"Bucketing {len(snapshots)} snapshots for {ticker_upper} (using hourly buckets)")
             bucketed = {}
             for snap in snapshots:
+                # Snapshots are tuples: (timestamp, price_per_share, current_value)
                 # Bucket by hour instead of day to preserve more granularity
-                bucket_key = snap.timestamp.replace(minute=0, second=0, microsecond=0)
+                snap_timestamp = snap[0]
+                bucket_key = snap_timestamp.replace(minute=0, second=0, microsecond=0)
                 # Keep the latest snapshot in each bucket
-                if bucket_key not in bucketed or snap.timestamp > bucketed[bucket_key].timestamp:
+                if bucket_key not in bucketed or snap_timestamp > bucketed[bucket_key][0]:
                     bucketed[bucket_key] = snap
             
             # Convert to sorted list
-            bucketed_list = sorted(bucketed.values(), key=lambda x: x.timestamp)
+            bucketed_list = sorted(bucketed.values(), key=lambda x: x[0])
             
             # Filter to market hours only if market hours mode
+            # For extended hours mode, return ALL bucketed snapshots (including weekends, holidays, after-hours)
             if trading_hours_mode == "market":
                 market_hours_service = MarketHoursService()
                 bucketed_list = [
                     snap for snap in bucketed_list
-                    if market_hours_service.is_market_open(snap.timestamp)
+                    if market_hours_service.is_market_open(snap[0])
                 ]
                 logger.info(f"Filtered bucketed data to {len(bucketed_list)} market hours snapshots")
+            else:
+                # Extended hours mode: return all bucketed snapshots (no filtering)
+                logger.info(
+                    f"Extended hours mode: returning all {len(bucketed_list)} bucketed snapshots "
+                    f"(including non-trading days/hours)"
+                )
             
+            # Convert snapshots (tuples) to PricePoint objects
+            # Snapshots are tuples: (timestamp, price_per_share, current_value)
             series = [
                 PricePoint(
-                    timestamp=snap.timestamp,
-                    price=float(snap.price_per_share),
-                    value=float(snap.current_value) if snap.current_value else None
+                    timestamp=snap[0],  # timestamp
+                    price=float(snap[1]),  # price_per_share
+                    value=float(snap[2]) if snap[2] else None  # current_value
                 )
                 for snap in bucketed_list
             ]
