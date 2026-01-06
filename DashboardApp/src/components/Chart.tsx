@@ -4,6 +4,7 @@ import { LineChart } from 'react-native-gifted-charts';
 import Svg, { Defs, Pattern, Circle, Rect as SvgRect, LinearGradient, Stop, Mask, ClipPath, Path, Line, G } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../constants/colors';
+import { TradingHoursMode, isMarketHours } from '../utils/marketHours';
 
 // Create animated SVG components for path animations
 const AnimatedPath = Animated.createAnimatedComponent(Path);
@@ -46,6 +47,7 @@ export interface ChartProps {
   onDragStart?: () => void;
   onDragEnd?: () => void;
   timeRange?: TimeRange;
+  tradingHoursMode?: TradingHoursMode;
   config?: ChartConfig;
   testID?: string;
 }
@@ -249,6 +251,7 @@ function useChartTransition(
   width: number,
   height: number,
   timeRange: TimeRange,
+  tradingHoursMode?: TradingHoursMode,
   curved: boolean = true
 ) {
   // Track previous values for transition
@@ -256,6 +259,7 @@ function useChartTransition(
   const prevMinValueRef = useRef<number>(minValue);
   const prevMaxValueRef = useRef<number>(maxValue);
   const prevTimeRangeRef = useRef<TimeRange>(timeRange);
+  const prevTradingHoursModeRef = useRef<TradingHoursMode | undefined>(tradingHoursMode);
   
   // Animation value for transition (0 = old data, 1 = new data)
   const transitionAnim = useRef(new Animated.Value(1)).current; // Start at 1 (new data visible)
@@ -313,14 +317,15 @@ function useChartTransition(
   const oldMinValueForAnimation = useRef<number>(0);
   const oldMaxValueForAnimation = useRef<number>(0);
   
-  // Check if we need to animate (timeRange changed)
+  // Check if we need to animate (timeRange or tradingHoursMode changed)
   useEffect(() => {
     const timeRangeChanged = prevTimeRangeRef.current !== timeRange;
+    const tradingHoursModeChanged = prevTradingHoursModeRef.current !== tradingHoursMode;
     const dataChanged = prevChartDataRef.current !== chartData;
     
-    // Always process timeRange changes, even if animation is in progress
-    // This ensures animations fire when toggling rapidly between timeframes
-    if (timeRangeChanged || dataChanged) {
+    // Always process timeRange or tradingHoursMode changes, even if animation is in progress
+    // This ensures animations fire when toggling rapidly between timeframes or modes
+    if (timeRangeChanged || tradingHoursModeChanged || dataChanged) {
       // Store previous values BEFORE updating refs (for animation interpolation)
       const oldChartData = [...prevChartDataRef.current]; // Deep copy to preserve old data
       const oldMinValue = prevMinValueRef.current;
@@ -360,10 +365,10 @@ function useChartTransition(
         }
       }
       
-      // ONLY animate on timeRange change OR if data structure changed significantly
-      // For auto-refreshes with same timeframe, skip animation to prevent reset
-      // This prevents the graph from resetting when data is refreshed but timeframe is unchanged
-      const shouldAnimate = timeRangeChanged || (dataChanged && isSignificantChange);
+      // ONLY animate on timeRange change, tradingHoursMode change, OR if data structure changed significantly
+      // For auto-refreshes with same timeframe and mode, skip animation to prevent reset
+      // This prevents the graph from resetting when data is refreshed but timeframe/mode is unchanged
+      const shouldAnimate = timeRangeChanged || tradingHoursModeChanged || (dataChanged && isSignificantChange);
       
       if (shouldAnimate) {
         // Store old values for animation interpolation
@@ -449,6 +454,7 @@ function useChartTransition(
         prevMinValueRef.current = minValue;
         prevMaxValueRef.current = maxValue;
         prevTimeRangeRef.current = timeRange;
+        prevTradingHoursModeRef.current = tradingHoursMode;
         return; // Early return - no animation needed, chart updates silently
       }
       
@@ -457,8 +463,9 @@ function useChartTransition(
       prevMinValueRef.current = minValue;
       prevMaxValueRef.current = maxValue;
       prevTimeRangeRef.current = timeRange;
+      prevTradingHoursModeRef.current = tradingHoursMode;
     }
-  }, [chartData, minValue, maxValue, timeRange, transitionAnim]);
+  }, [chartData, minValue, maxValue, timeRange, tradingHoursMode, transitionAnim]);
   
   // Generate interpolated paths with smooth interpolation
   const getInterpolatedPaths = useCallback((): { linePath: string; areaPath: string } => {
@@ -1293,12 +1300,14 @@ const DragTooltip = React.memo(({
   height,
   value,
   timestamp,
+  tradingHoursMode,
 }: {
   dragXAnimated: Animated.Value;
   dotYAnimated: Animated.Value;
   height: number;
   value: number;
   timestamp: number;
+  tradingHoursMode?: TradingHoursMode;
 }) => {
   const [tooltipY, setTooltipY] = useState(0);
   const [tooltipX, setTooltipX] = useState(0);
@@ -1359,12 +1368,102 @@ const DragTooltip = React.memo(({
           fontSize: 12,
           color: Colors.textSecondary,
         }}>
-          {new Intl.DateTimeFormat('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          }).format(new Date(timestamp))}
+          {(() => {
+            // Timestamp is milliseconds since epoch (timezone-agnostic)
+            // Create Date object - JavaScript automatically handles timezone conversion
+            const date = new Date(timestamp);
+            
+            // Get timezone info
+            const timezoneInfo = Intl.DateTimeFormat().resolvedOptions();
+            const offsetMinutes = date.getTimezoneOffset();
+            const offsetHours = Math.abs(offsetMinutes) / 60;
+            const offsetSign = offsetMinutes < 0 ? '+' : '-';
+            
+            // Get UTC time components
+            const utcHours = date.getUTCHours();
+            const utcMinutes = date.getUTCMinutes();
+            
+            // ALWAYS manually convert UTC to local time
+            // React Native's getHours() may not work correctly in all cases
+            // Manual conversion: local = UTC - offset
+            // offsetMinutes is positive when behind UTC (e.g., EST is +300 = 5 hours behind UTC)
+            // Example: UTC 3:49 AM, offset +300 → local = 3:49 - 300min = 22:49 previous day = 10:49 PM previous day
+            // But we want: UTC 3:49 AM, EST (UTC-5) → local = 3:49 - 5 hours = 22:49 previous day = 10:49 PM previous day
+            // Wait, that's still wrong. Let me recalculate:
+            // If UTC is 3:49 AM and we're EST (UTC-5), local should be 10:49 PM the previous day
+            // But the user says device is 5:48 PM, so UTC should be 10:48 PM (5:48 PM + 5 hours)
+            // So if getUTCHours() is 3, that means the timestamp represents 3:49 AM UTC
+            // Local time in EST would be 3:49 AM - 5 hours = 10:49 PM previous day
+            // But the user wants to see 5:48 PM, which means the timestamp should represent 10:48 PM UTC
+            
+            // ALWAYS manually convert UTC to local time
+            // React Native's Date methods may not work correctly - force manual conversion
+            // Manual conversion: local = UTC - offset
+            // offsetMinutes is positive when behind UTC (e.g., EST is +300 = 5 hours behind UTC)
+            const totalLocalMinutes = (utcHours * 60 + utcMinutes) - offsetMinutes;
+            let localHours = Math.floor((totalLocalMinutes + 24 * 60) % (24 * 60) / 60);
+            let localMinutes = (totalLocalMinutes + 24 * 60) % 60;
+            
+            // Calculate local day and month (handle day rollover from timezone conversion)
+            let localDay = date.getUTCDate();
+            let localMonth = date.getUTCMonth();
+            const utcDay = date.getUTCDate();
+            const utcMonth = date.getUTCMonth();
+            
+            // If local time rolled back to previous day (negative totalLocalMinutes)
+            if (totalLocalMinutes < 0) {
+              localDay = utcDay - 1;
+              if (localDay < 1) {
+                localMonth = utcMonth - 1;
+                if (localMonth < 0) {
+                  localMonth = 11;
+                }
+                // Approximate days in previous month (simplified - assumes 30)
+                localDay = 30;
+              }
+            } else if (totalLocalMinutes >= 24 * 60) {
+              // Rolled forward to next day
+              localDay = utcDay + 1;
+              if (localDay > 31) {
+                localDay = 1;
+                localMonth = (utcMonth + 1) % 12;
+              }
+            }
+            
+            // Log timezone info every time (for debugging)
+            console.log('🌍 [Chart] Timestamp Conversion:', {
+              timestamp: timestamp,
+              timeZone: timezoneInfo.timeZone,
+              offsetMinutes: offsetMinutes,
+              offsetHours: `${offsetSign}${offsetHours}`,
+              UTC: `${utcHours}:${utcMinutes.toString().padStart(2, '0')} (day ${utcDay})`,
+              getHours_returns: `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`,
+              Manual_Local: `${localHours}:${localMinutes.toString().padStart(2, '0')} (day ${localDay})`,
+              dateToString: date.toString(),
+            });
+            
+            // Format month name
+            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const month = monthNames[localMonth];
+            
+            // Format time
+            const ampm = localHours >= 12 ? 'PM' : 'AM';
+            const displayHours = localHours % 12 || 12;
+            const displayMinutes = localMinutes.toString().padStart(2, '0');
+            
+            // Format: "Jan 15, 2:30 PM" (in local timezone)
+            let timeString = `${month} ${localDay}, ${displayHours}:${displayMinutes} ${ampm}`;
+            
+            // Add indicator for extended hours mode
+            if (tradingHoursMode === 'extended') {
+              const isMarketHoursTime = isMarketHours(timestamp);
+              if (!isMarketHoursTime) {
+                timeString += ' (After Hours)';
+              }
+            }
+            
+            return timeString;
+          })()}
         </Text>
       </View>
     </View>
@@ -1693,6 +1792,7 @@ function Chart({
   onDragStart, 
   onDragEnd, 
   timeRange = '1Y',
+  tradingHoursMode = 'market',
   config = {},
   testID
 }: ChartProps) {
@@ -1738,6 +1838,7 @@ function Chart({
     width,
     height,
     timeRange,
+    tradingHoursMode,
     finalConfig.curved ?? true
   );
   const {
@@ -1919,6 +2020,7 @@ function Chart({
               height={height}
               value={currentDragData.value}
               timestamp={currentDragData.timestamp}
+              tradingHoursMode={tradingHoursMode}
             />
           )}
         </>
@@ -1930,12 +2032,13 @@ function Chart({
 // Memoize with custom comparison - only re-render when data/props actually change
 // This prevents re-renders from drag state changes
 export default React.memo(Chart, (prevProps, nextProps) => {
-  // Only re-render if data, height, patternType, or timeRange changes
+  // Only re-render if data, height, patternType, timeRange, or tradingHoursMode changes
   // Ignore callback changes (onDragStart/onDragEnd) as they don't affect rendering
   if (prevProps.data.length !== nextProps.data.length) return false;
   if (prevProps.height !== nextProps.height) return false;
   if (prevProps.patternType !== nextProps.patternType) return false;
   if (prevProps.timeRange !== nextProps.timeRange) return false;
+  if (prevProps.tradingHoursMode !== nextProps.tradingHoursMode) return false;
   
   // Deep compare data arrays (only first/last/middle to avoid full scan)
   if (prevProps.data.length > 0 && nextProps.data.length > 0) {

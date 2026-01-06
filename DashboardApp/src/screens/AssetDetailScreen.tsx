@@ -19,6 +19,8 @@ import { api } from '../services/api';
 import { formatCurrency } from '../utils/formatters';
 import { Colors } from '../constants/colors';
 import Chart from '../components/Chart';
+import { fetchAssetPriceHistory, transformToChartData, invalidateChartCache } from '../services/chartData';
+import { TradingHoursMode } from '../utils/marketHours';
 
 type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
 
@@ -53,6 +55,7 @@ export default function AssetDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AssetPriceHistory | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
+  const [tradingHoursMode, setTradingHoursMode] = useState<TradingHoursMode>('market');
   const [error, setError] = useState<string | null>(null);
   const previousPriceRef = useRef<number | null>(null);
   const previousDollarsDigitsRef = useRef<number[] | null>(null);
@@ -71,7 +74,7 @@ export default function AssetDetailScreen() {
     'ALL': 'ALL',
   };
 
-  // Fetch asset price history
+  // Fetch asset price history with caching
   useEffect(() => {
     if (!token) return;
 
@@ -80,11 +83,13 @@ export default function AssetDetailScreen() {
         setLoading(true);
         setError(null);
         
-        const backendTimeRange = timeRangeMap[timeRange];
-        const response = await api.get<AssetPriceHistory>(
-          `/assets/${ticker}/price-history?time_range=${backendTimeRange}`,
-          token
-        );
+        // Always fetch fresh data when trading hours mode changes
+        // The cache doesn't differentiate between market/extended modes,
+        // so we invalidate it to ensure we get the correct data
+        invalidateChartCache(ticker);
+        
+        // Use cached service for efficient data fetching
+        const response = await fetchAssetPriceHistory(ticker, timeRange, token, tradingHoursMode);
         
         setData(response);
       } catch (err: any) {
@@ -96,47 +101,17 @@ export default function AssetDetailScreen() {
     };
 
     fetchData();
-  }, [token, ticker, timeRange]);
+  }, [token, ticker, timeRange, tradingHoursMode]);
 
-  // Convert price history to chart format with client-side filtering
+  // Convert price history to chart format using optimized transformation
+  // Uses efficient single-pass transformation for better performance
   const chartData = useMemo(() => {
-    if (!data || !data.series || data.series.length === 0) {
+    if (!data) {
       return [];
     }
     
-    // Filter data based on selected time range (client-side)
-    let filteredSeries = data.series;
-    if (timeRange !== 'ALL') {
-      const now = new Date();
-      const cutoffDate = new Date();
-      
-      switch (timeRange) {
-        case '1W':
-          cutoffDate.setDate(now.getDate() - 7);
-          break;
-        case '1M':
-          cutoffDate.setDate(now.getDate() - 30);
-          break;
-        case '3M':
-          cutoffDate.setDate(now.getDate() - 90);
-          break;
-        case '1Y':
-          cutoffDate.setFullYear(now.getFullYear() - 1);
-          break;
-      }
-      
-      const cutoffTime = cutoffDate.getTime();
-      filteredSeries = data.series.filter(point => {
-        const pointTime = new Date(point.timestamp).getTime();
-        return pointTime >= cutoffTime;
-      });
-    }
-    
-    return filteredSeries.map((point) => ({
-      x: new Date(point.timestamp).getTime(),
-      y: point.price,
-    }));
-  }, [data, timeRange]);
+    return transformToChartData(data);
+  }, [data]);
 
   // Calculate price values (safe defaults if no data)
   const currentPrice = data?.current_price || (data?.series && data.series.length > 0 ? data.series[data.series.length - 1].price : 0);
@@ -249,7 +224,7 @@ export default function AssetDetailScreen() {
           </TouchableOpacity>
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primary} />
+          <ActivityIndicator size="large" color={Colors.orange} />
           <Text style={styles.loadingText}>Loading asset data...</Text>
         </View>
       </View>
@@ -478,6 +453,45 @@ export default function AssetDetailScreen() {
           </View>
         </View>
 
+        {/* Trading Hours Mode Toggle */}
+        <View style={styles.tradingHoursContainer}>
+          <Text style={styles.tradingHoursLabel}>Trading Hours:</Text>
+          <View style={styles.tradingHoursToggle}>
+            <TouchableOpacity
+              style={[
+                styles.tradingHoursButton,
+                tradingHoursMode === 'market' && styles.tradingHoursButtonActive,
+              ]}
+              onPress={() => setTradingHoursMode('market')}
+            >
+              <Text
+                style={[
+                  styles.tradingHoursButtonText,
+                  tradingHoursMode === 'market' && styles.tradingHoursButtonTextActive,
+                ]}
+              >
+                Market Hours
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.tradingHoursButton,
+                tradingHoursMode === 'extended' && styles.tradingHoursButtonActive,
+              ]}
+              onPress={() => setTradingHoursMode('extended')}
+            >
+              <Text
+                style={[
+                  styles.tradingHoursButtonText,
+                  tradingHoursMode === 'extended' && styles.tradingHoursButtonTextActive,
+                ]}
+              >
+                Extended Hours
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Chart */}
         <View style={styles.chartContainer}>
           {chartData.length > 0 ? (
@@ -486,6 +500,7 @@ export default function AssetDetailScreen() {
               height={250}
               width={screenWidth - 40}
               timeRange={timeRange}
+              tradingHoursMode={tradingHoursMode}
               config={{
                 lineColor: isPositive ? Colors.greenDark : Colors.redDark,
                 gradientStartColor: isPositive ? Colors.greenDark : Colors.redDark,
@@ -555,7 +570,7 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     fontSize: 16,
-    color: Colors.primary,
+    color: Colors.orange,
     fontWeight: '600',
   },
   headerTitle: {
@@ -638,6 +653,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.textSecondary,
   },
+  tradingHoursContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  tradingHoursLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: Colors.textSecondary,
+  },
+  tradingHoursToggle: {
+    flexDirection: 'row',
+    backgroundColor: Colors.backgroundGrey,
+    borderRadius: 16,
+    padding: 4,
+    gap: 4,
+  },
+  tradingHoursButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  tradingHoursButtonActive: {
+    backgroundColor: Colors.background,
+  },
+  tradingHoursButtonText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: Colors.textSecondary,
+  },
+  tradingHoursButtonTextActive: {
+    color: Colors.textPrimary,
+    fontWeight: '600',
+  },
   timeRangeContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -690,7 +742,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 8,
-    backgroundColor: Colors.primary,
+    backgroundColor: Colors.orange,
   },
   retryButtonText: {
     fontSize: 14,

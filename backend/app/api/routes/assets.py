@@ -78,51 +78,78 @@ def _fill_missing_days_for_extended_hours(
         snap_date = snap_timestamp.date() if isinstance(snap_timestamp, datetime) else snap_timestamp
         dates_with_snapshots.add(snap_date)
     
-    # Sort snapshots by timestamp to get first/last known prices for filling
+    logger.info(
+        f"Fill function: {len(snapshots)} snapshots covering {len(dates_with_snapshots)} unique dates, "
+        f"range: {start_date.date() if start_date else 'None'} to {end_date.date()}"
+    )
+    
+    # Sort snapshots by timestamp for easier lookup
     sorted_snapshots = sorted(snapshots, key=lambda x: x[0])
     first_snapshot = sorted_snapshots[0] if sorted_snapshots else None
-    last_snapshot = sorted_snapshots[-1] if sorted_snapshots else None
+    
+    if not first_snapshot:
+        return snapshots
     
     # Start with all existing snapshots
     filled_snapshots = list(snapshots)
     
     # For each missing calendar day, add a synthetic snapshot
-    # Use the last known price from the previous day (forward fill)
+    # Use forward fill: use the last known price from the most recent previous day
     current_date = start_date.date()
     end_date_obj = end_date.date()
     
-    # Track the last known price/value for forward filling
-    last_known_price = last_snapshot[1] if last_snapshot else None
-    last_known_value = last_snapshot[2] if last_snapshot else None
+    # Track the last known price/value as we iterate through dates
+    last_known_price = None
+    last_known_value = None
     
     while current_date <= end_date_obj:
-        if current_date not in dates_with_snapshots:
-            # This day has no snapshots - create a synthetic one
-            # Use the last known price from previous days
-            if last_known_price is not None:
-                # Find the last snapshot before this date to get the price
-                # Look through existing snapshots to find the most recent one before this date
-                fill_price = last_known_price
-                fill_value = last_known_value
+        if current_date in dates_with_snapshots:
+            # This day has snapshots - update last known price/value
+            # Find the most recent snapshot for this day (could be multiple snapshots per day)
+            day_snapshots = [s for s in sorted_snapshots 
+                           if (s[0].date() if isinstance(s[0], datetime) else s[0]) == current_date]
+            if day_snapshots:
+                # Use the latest snapshot of the day
+                latest_snapshot = max(day_snapshots, key=lambda x: x[0])
+                last_known_price = latest_snapshot[1]
+                last_known_value = latest_snapshot[2]
+        else:
+            # This day has no snapshots - create synthetic snapshots throughout the day
+            # Use forward fill: use the last known price from previous days
+            fill_price = last_known_price if last_known_price is not None else first_snapshot[1]
+            fill_value = last_known_value if last_known_value is not None else first_snapshot[2]
+            
+            if fill_price is not None:
+                # Create multiple synthetic snapshots throughout the day to ensure visibility
+                # For extended hours, create snapshots at start, middle, and end of day
+                # This ensures the day is visible even after downsampling
+                synthetic_times = [
+                    datetime.combine(current_date, datetime.min.time()),  # Midnight (00:00)
+                    datetime.combine(current_date, datetime(2000, 1, 1, 12, 0).time()),  # Noon (12:00)
+                    datetime.combine(current_date, datetime(2000, 1, 1, 23, 59, 59).time()),  # End of day (23:59:59)
+                ]
                 
-                # Check if there's a snapshot from a previous day
-                for snap in sorted_snapshots:
-                    snap_date = snap[0].date() if isinstance(snap[0], datetime) else snap[0]
-                    if snap_date < current_date:
-                        fill_price = snap[1]
-                        fill_value = snap[2]
-                    elif snap_date > current_date:
-                        break
+                for synthetic_timestamp in synthetic_times:
+                    synthetic_snapshot = (synthetic_timestamp, fill_price, fill_value)
+                    filled_snapshots.append(synthetic_snapshot)
                 
-                # Create synthetic snapshot at midnight for the missing day
-                synthetic_timestamp = datetime.combine(current_date, datetime.min.time())
-                synthetic_snapshot = (synthetic_timestamp, fill_price, fill_value)
-                filled_snapshots.append(synthetic_snapshot)
+                # Update last known for subsequent forward fills
+                if not last_known_price:
+                    last_known_price = fill_price
+                    last_known_value = fill_value
         
         current_date += timedelta(days=1)
     
     # Sort by timestamp to maintain chronological order
     filled_snapshots.sort(key=lambda x: x[0])
+    
+    # Log how many synthetic snapshots were created
+    synthetic_count = len(filled_snapshots) - len(snapshots)
+    if synthetic_count > 0:
+        logger.info(
+            f"Fill function: Created {synthetic_count} synthetic snapshots for missing days. "
+            f"Total: {len(filled_snapshots)} snapshots"
+        )
     
     return filled_snapshots
 
@@ -408,6 +435,10 @@ async def get_asset_price_history(
                 # For extended hours mode, fill in missing calendar days with last known price
                 # This ensures holidays and weekends show on the chart with the last known price
                 from datetime import timedelta
+                logger.info(
+                    f"Extended hours mode: starting with {len(snapshots)} snapshots, "
+                    f"time range: {tr.start_date.date() if tr.start_date else None} to {tr.end_date.date()}"
+                )
                 filled_snapshots = _fill_missing_days_for_extended_hours(
                     snapshots, tr.start_date, tr.end_date
                 )
@@ -415,6 +446,10 @@ async def get_asset_price_history(
                     f"Extended hours mode: filled missing days - "
                     f"{len(filled_snapshots)} total snapshots (from {len(snapshots)} original)"
                 )
+                # Log a sample of filled dates for debugging
+                if filled_snapshots:
+                    sample_dates = [s[0].date() for s in filled_snapshots[:5]]
+                    logger.info(f"Sample filled snapshot dates (first 5): {sample_dates}")
                 snapshots = filled_snapshots
             
             # Convert snapshots (tuples) to PricePoint objects
