@@ -15,6 +15,7 @@ from app.models.asset_price import AssetPrice
 from app.services.dashboard.models.time_range import TimeRange, TimeGranularity
 from app.services.dashboard.queries.positions import _get_bucket_key
 from app.services.price_service import PriceService
+from app.services.market_hours_service import MarketHoursService
 from app.core.config import settings
 from sqlalchemy import and_, func
 import httpx
@@ -150,6 +151,7 @@ def _fetch_historical_prices_from_alpaca(
 async def get_asset_price_history(
     ticker: str,
     time_range: str = Query("1M", regex="^(1W|1M|3M|1Y|ALL)$", description="Time range: 1W, 1M, 3M, 1Y, or ALL"),
+    trading_hours_mode: str = Query("market", regex="^(market|extended)$", description="Trading hours mode: market or extended"),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -162,6 +164,7 @@ async def get_asset_price_history(
     Args:
         ticker: Stock ticker symbol (e.g., "STRC", "AAPL")
         time_range: Time range shorthand (1M, 3M, 1Y, ALL)
+        trading_hours_mode: "market" to show only market hours, "extended" to show all hours
         db: Database session
         user: Authenticated user from JWT
     
@@ -174,6 +177,30 @@ async def get_asset_price_history(
         
         # Convert shorthand to TimeRange
         tr = TimeRange.from_shorthand(time_range)
+        
+        # Adjust time range based on trading hours mode
+        market_hours_service = MarketHoursService()
+        if trading_hours_mode == "market":
+            # Market hours mode: use trading days (1W = 5 trading days)
+            adjusted_start, adjusted_end = market_hours_service.adjust_time_range_for_trading_days(
+                tr.start_date,
+                tr.end_date,
+                time_range
+            )
+            tr.start_date = adjusted_start
+            tr.end_date = adjusted_end
+            logger.info(
+                f"Adjusted time range for market hours: "
+                f"start={tr.start_date}, end={tr.end_date}"
+            )
+        elif trading_hours_mode == "extended" and time_range == "1W":
+            # Extended hours mode: 1W = 5 calendar days (not 7)
+            from datetime import timedelta
+            tr.start_date = tr.end_date - timedelta(days=5)
+            logger.info(
+                f"Adjusted time range for extended hours (1W): "
+                f"start={tr.start_date}, end={tr.end_date} (5 calendar days)"
+            )
         
         # Get current price
         current_price_obj = db.query(AssetPrice).filter(
@@ -196,7 +223,7 @@ async def get_asset_price_history(
             )
         )
         
-        # Apply time range filter
+        # Apply time range filter (all timestamps in UTC)
         if tr.start_date:
             query = query.filter(PortfolioSnapshot.timestamp >= tr.start_date)
         query = query.filter(PortfolioSnapshot.timestamp <= tr.end_date)
@@ -207,7 +234,19 @@ async def get_asset_price_history(
         # Get all snapshots
         snapshots = query.all()
         
-        logger.info(f"Found {len(snapshots)} snapshots for {ticker_upper} in time range {time_range}")
+        logger.info(
+            f"Time range filter for {ticker_upper}: "
+            f"start={tr.start_date}, end={tr.end_date}, "
+            f"found {len(snapshots)} snapshots"
+        )
+        
+        # Log first and last snapshot timestamps for debugging
+        if snapshots:
+            first_snapshot = snapshots[0].timestamp
+            last_snapshot = snapshots[-1].timestamp
+            logger.info(
+                f"Snapshot range: first={first_snapshot}, last={last_snapshot}"
+            )
         
         # Only fetch from Alpaca if we have NO snapshots at all
         # Always use position snapshots when available, even if price hasn't varied
@@ -249,6 +288,22 @@ async def get_asset_price_history(
         if len(snapshots) < MAX_SNAPSHOTS_BEFORE_BUCKETING:
             # Return all snapshots - preserve 5-minute granularity
             logger.info(f"Returning all {len(snapshots)} snapshots for {ticker_upper} (preserving 5-minute granularity)")
+            
+            # Filter to market hours only if market hours mode
+            if trading_hours_mode == "market":
+                market_hours_service = MarketHoursService()
+                # Filter to only trading days during market hours
+                # This ensures we exclude weekends, holidays, and after-hours data
+                filtered_snapshots = [
+                    snap for snap in snapshots
+                    if market_hours_service.is_market_open(snap.timestamp)
+                ]
+                logger.info(
+                    f"Filtered to {len(filtered_snapshots)} market hours snapshots "
+                    f"(from {len(snapshots)} total) for {ticker_upper}"
+                )
+                snapshots = filtered_snapshots
+            
             series = [
                 PricePoint(
                     timestamp=snap.timestamp,
@@ -270,13 +325,24 @@ async def get_asset_price_history(
                     bucketed[bucket_key] = snap
             
             # Convert to sorted list
+            bucketed_list = sorted(bucketed.values(), key=lambda x: x.timestamp)
+            
+            # Filter to market hours only if market hours mode
+            if trading_hours_mode == "market":
+                market_hours_service = MarketHoursService()
+                bucketed_list = [
+                    snap for snap in bucketed_list
+                    if market_hours_service.is_market_open(snap.timestamp)
+                ]
+                logger.info(f"Filtered bucketed data to {len(bucketed_list)} market hours snapshots")
+            
             series = [
                 PricePoint(
                     timestamp=snap.timestamp,
                     price=float(snap.price_per_share),
                     value=float(snap.current_value) if snap.current_value else None
                 )
-                for snap in sorted(bucketed.values(), key=lambda x: x.timestamp)
+                for snap in bucketed_list
             ]
             logger.info(f"After bucketing: {len(series)} data points")
         
