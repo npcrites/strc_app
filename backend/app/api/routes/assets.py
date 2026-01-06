@@ -4,7 +4,7 @@ Assets API endpoints for price history
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from pydantic import BaseModel
 
 from app.db.session import get_db
@@ -41,22 +41,72 @@ class AssetPriceHistory(BaseModel):
     series: List[PricePoint]
 
 
+def _normalize_snapshots_per_day(
+    snapshots: List,
+    target_per_day: int
+) -> List:
+    """
+    Normalize snapshots to have the same number of data points per day.
+    
+    Buckets snapshots within each day and selects evenly distributed points.
+    This ensures consistency between market hours and extended hours views.
+    
+    Args:
+        snapshots: List of snapshot tuples (timestamp, price_per_share, current_value)
+        target_per_day: Target number of snapshots per day
+        
+    Returns:
+        List of normalized snapshots with consistent points per day
+    """
+    if not snapshots:
+        return snapshots
+    
+    # Group snapshots by date
+    snapshots_by_date = {}
+    for snap in snapshots:
+        snap_timestamp = snap[0]
+        snap_date = snap_timestamp.date() if isinstance(snap_timestamp, datetime) else snap_timestamp
+        
+        if snap_date not in snapshots_by_date:
+            snapshots_by_date[snap_date] = []
+        snapshots_by_date[snap_date].append(snap)
+    
+    normalized = []
+    for date, day_snapshots in sorted(snapshots_by_date.items()):
+        if len(day_snapshots) <= target_per_day:
+            # Already has fewer or equal points, keep all
+            normalized.extend(day_snapshots)
+        else:
+            # Bucket to target_per_day points
+            # Sort by time and select evenly distributed points
+            day_snapshots.sort(key=lambda x: x[0])
+            step = len(day_snapshots) / target_per_day
+            for i in range(target_per_day):
+                index = int(i * step)
+                normalized.append(day_snapshots[index])
+    
+    normalized.sort(key=lambda x: x[0])
+    return normalized
+
+
 def _fill_missing_days_for_extended_hours(
     snapshots: List,
     start_date: Optional[datetime],
-    end_date: datetime
+    end_date: datetime,
+    target_snapshots_per_day: int = 24
 ) -> List:
     """
     Fill in missing calendar days for extended hours mode.
     
-    For holidays and weekends where no snapshots exist, creates synthetic
-    snapshots using the last known price (forward fill). This ensures all
-    calendar days appear on the chart in extended hours mode.
+    Creates synthetic snapshots for missing days using the same number of
+    data points per day as trading days, ensuring consistency between
+    market hours and extended hours views.
     
     Args:
         snapshots: List of snapshot tuples/rows (timestamp, price_per_share, current_value)
         start_date: Start of time range (None for ALL)
         end_date: End of time range
+        target_snapshots_per_day: Number of synthetic snapshots to create per missing day
         
     Returns:
         List of snapshots with missing days filled in (as tuples)
@@ -68,22 +118,33 @@ def _fill_missing_days_for_extended_hours(
         # For "ALL", don't fill - just return original snapshots
         return snapshots
     
-    # For extended hours, we want to keep ALL snapshots (not just one per day)
-    # But we need to track which dates have snapshots so we can fill missing days
-    # Create a set of dates that have snapshots
+    # Create a set of dates that have snapshots and group by date
     dates_with_snapshots = set()
+    snapshots_by_date = {}
     for snap in snapshots:
         # Access tuple by index: [0] = timestamp, [1] = price_per_share, [2] = current_value
         snap_timestamp = snap[0]
         snap_date = snap_timestamp.date() if isinstance(snap_timestamp, datetime) else snap_timestamp
         dates_with_snapshots.add(snap_date)
+        
+        if snap_date not in snapshots_by_date:
+            snapshots_by_date[snap_date] = []
+        snapshots_by_date[snap_date].append(snap)
+    
+    # Calculate average number of snapshots per day for days that have data
+    # This will be used to create the same number of synthetic snapshots for missing days
+    snapshot_counts = [len(snaps) for snaps in snapshots_by_date.values()]
+    avg_snapshots_per_day = int(sum(snapshot_counts) / len(snapshot_counts)) if snapshot_counts else target_snapshots_per_day
+    # Use calculated average, but ensure minimum of 3 and maximum of 24 (hourly) for synthetic snapshots
+    actual_target = max(3, min(avg_snapshots_per_day, target_snapshots_per_day))
     
     logger.info(
         f"Fill function: {len(snapshots)} snapshots covering {len(dates_with_snapshots)} unique dates, "
+        f"average {avg_snapshots_per_day:.1f} snapshots per day, "
+        f"will create {actual_target} synthetic snapshots per missing day, "
         f"range: {start_date.date() if start_date else 'None'} to {end_date.date()}"
     )
     
-    # Sort snapshots by timestamp for easier lookup
     sorted_snapshots = sorted(snapshots, key=lambda x: x[0])
     first_snapshot = sorted_snapshots[0] if sorted_snapshots else None
     
@@ -93,7 +154,7 @@ def _fill_missing_days_for_extended_hours(
     # Start with all existing snapshots
     filled_snapshots = list(snapshots)
     
-    # For each missing calendar day, add a synthetic snapshot
+    # For each missing calendar day, add synthetic snapshots
     # Use forward fill: use the last known price from the most recent previous day
     current_date = start_date.date()
     end_date_obj = end_date.date()
@@ -105,9 +166,7 @@ def _fill_missing_days_for_extended_hours(
     while current_date <= end_date_obj:
         if current_date in dates_with_snapshots:
             # This day has snapshots - update last known price/value
-            # Find the most recent snapshot for this day (could be multiple snapshots per day)
-            day_snapshots = [s for s in sorted_snapshots 
-                           if (s[0].date() if isinstance(s[0], datetime) else s[0]) == current_date]
+            day_snapshots = snapshots_by_date[current_date]
             if day_snapshots:
                 # Use the latest snapshot of the day
                 latest_snapshot = max(day_snapshots, key=lambda x: x[0])
@@ -120,16 +179,23 @@ def _fill_missing_days_for_extended_hours(
             fill_value = last_known_value if last_known_value is not None else first_snapshot[2]
             
             if fill_price is not None:
-                # Create multiple synthetic snapshots throughout the day to ensure visibility
-                # For extended hours, create snapshots at start, middle, and end of day
-                # This ensures the day is visible even after downsampling
-                synthetic_times = [
-                    datetime.combine(current_date, datetime.min.time()),  # Midnight (00:00)
-                    datetime.combine(current_date, datetime(2000, 1, 1, 12, 0).time()),  # Noon (12:00)
-                    datetime.combine(current_date, datetime(2000, 1, 1, 23, 59, 59).time()),  # End of day (23:59:59)
-                ]
-                
-                for synthetic_timestamp in synthetic_times:
+                # Create actual_target synthetic snapshots evenly distributed throughout the day
+                # This ensures missing days have the same number of data points as trading days
+                for i in range(actual_target):
+                    # Distribute evenly across the day (from 00:00 to 23:59:59)
+                    hours_offset = (i * 24) / actual_target
+                    hour = int(hours_offset)
+                    minute = int((hours_offset - hour) * 60)
+                    second = int(((hours_offset - hour) * 60 - minute) * 60)
+                    
+                    # Ensure we don't exceed 23:59:59
+                    if hour >= 24:
+                        hour = 23
+                        minute = 59
+                        second = 59
+                    
+                    synthetic_time = time(hour, minute, second)
+                    synthetic_timestamp = datetime.combine(current_date, synthetic_time)
                     synthetic_snapshot = (synthetic_timestamp, fill_price, fill_value)
                     filled_snapshots.append(synthetic_snapshot)
                 
@@ -147,8 +213,8 @@ def _fill_missing_days_for_extended_hours(
     synthetic_count = len(filled_snapshots) - len(snapshots)
     if synthetic_count > 0:
         logger.info(
-            f"Fill function: Created {synthetic_count} synthetic snapshots for missing days. "
-            f"Total: {len(filled_snapshots)} snapshots"
+            f"Fill function: Created {synthetic_count} synthetic snapshots for missing days "
+            f"({actual_target} per missing day). Total: {len(filled_snapshots)} snapshots"
         )
     
     return filled_snapshots
@@ -416,6 +482,10 @@ async def get_asset_price_history(
             # Return all snapshots - preserve 5-minute granularity
             logger.info(f"Returning all {len(snapshots)} snapshots for {ticker_upper} (preserving 5-minute granularity)")
             
+            # Target number of snapshots per day for normalization
+            # Use 24 (hourly) as a reasonable default for consistency
+            TARGET_POINTS_PER_DAY = 24
+            
             # Filter to market hours only if market hours mode
             if trading_hours_mode == "market":
                 market_hours_service = MarketHoursService()
@@ -431,6 +501,13 @@ async def get_asset_price_history(
                     f"(from {len(snapshots)} total) for {ticker_upper}"
                 )
                 snapshots = filtered_snapshots
+                
+                # Normalize to consistent points per day for market hours
+                snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY)
+                logger.info(
+                    f"Normalized market hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
+                    f"{len(snapshots)} total snapshots"
+                )
             elif trading_hours_mode == "extended":
                 # For extended hours mode, fill in missing calendar days with last known price
                 # This ensures holidays and weekends show on the chart with the last known price
@@ -440,17 +517,20 @@ async def get_asset_price_history(
                     f"time range: {tr.start_date.date() if tr.start_date else None} to {tr.end_date.date()}"
                 )
                 filled_snapshots = _fill_missing_days_for_extended_hours(
-                    snapshots, tr.start_date, tr.end_date
+                    snapshots, tr.start_date, tr.end_date, TARGET_POINTS_PER_DAY
                 )
                 logger.info(
                     f"Extended hours mode: filled missing days - "
                     f"{len(filled_snapshots)} total snapshots (from {len(snapshots)} original)"
                 )
-                # Log a sample of filled dates for debugging
-                if filled_snapshots:
-                    sample_dates = [s[0].date() for s in filled_snapshots[:5]]
-                    logger.info(f"Sample filled snapshot dates (first 5): {sample_dates}")
                 snapshots = filled_snapshots
+                
+                # Normalize to consistent points per day for extended hours
+                snapshots = _normalize_snapshots_per_day(snapshots, TARGET_POINTS_PER_DAY)
+                logger.info(
+                    f"Normalized extended hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
+                    f"{len(snapshots)} total snapshots"
+                )
             
             # Convert snapshots (tuples) to PricePoint objects
             # Snapshots are tuples: (timestamp, price_per_share, current_value)
@@ -466,6 +546,10 @@ async def get_asset_price_history(
             # Only bucket if we have an extremely large dataset (>10k snapshots)
             # Use hourly bucketing instead of daily to preserve more granularity
             logger.info(f"Bucketing {len(snapshots)} snapshots for {ticker_upper} (using hourly buckets)")
+            
+            # Target number of snapshots per day for normalization
+            TARGET_POINTS_PER_DAY = 24
+            
             bucketed = {}
             for snap in snapshots:
                 # Snapshots are tuples: (timestamp, price_per_share, current_value)
@@ -488,11 +572,29 @@ async def get_asset_price_history(
                     if market_hours_service.is_market_open(snap[0])
                 ]
                 logger.info(f"Filtered bucketed data to {len(bucketed_list)} market hours snapshots")
+                
+                # Normalize to consistent points per day for market hours
+                bucketed_list = _normalize_snapshots_per_day(bucketed_list, TARGET_POINTS_PER_DAY)
+                logger.info(
+                    f"Normalized bucketed market hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
+                    f"{len(bucketed_list)} total snapshots"
+                )
             else:
                 # Extended hours mode: return all bucketed snapshots (no filtering)
                 logger.info(
                     f"Extended hours mode: returning all {len(bucketed_list)} bucketed snapshots "
                     f"(including non-trading days/hours)"
+                )
+                
+                # For extended hours with large datasets, we still need to fill missing days
+                # and normalize to consistent points per day
+                filled_bucketed = _fill_missing_days_for_extended_hours(
+                    bucketed_list, tr.start_date, tr.end_date, TARGET_POINTS_PER_DAY
+                )
+                bucketed_list = _normalize_snapshots_per_day(filled_bucketed, TARGET_POINTS_PER_DAY)
+                logger.info(
+                    f"Normalized bucketed extended hours snapshots to {TARGET_POINTS_PER_DAY} points per day: "
+                    f"{len(bucketed_list)} total snapshots"
                 )
             
             # Convert snapshots (tuples) to PricePoint objects
@@ -505,7 +607,7 @@ async def get_asset_price_history(
                 )
                 for snap in bucketed_list
             ]
-            logger.info(f"After bucketing: {len(series)} data points")
+            logger.info(f"After bucketing and normalization: {len(series)} data points")
         
         # Add current price as the latest point if we have it
         if current_price and series:
