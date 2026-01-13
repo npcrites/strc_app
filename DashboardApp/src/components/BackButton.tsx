@@ -59,7 +59,9 @@ const createStyles = (colors: ReturnType<typeof getColors>) => {
       width: 44,
       height: 44,
       borderRadius: 12,
-      backgroundColor: (colors as any).glassBackground || 'rgba(255, 255, 255, 0.7)', // Card/Popover color hsl(20, 8%, 11%)
+      backgroundColor: isDark 
+        ? ((colors as any).glassBackground || 'rgba(255, 255, 255, 0.7)') 
+        : 'rgba(255, 255, 255, 0.95)', // 0.7 opacity in light mode
       // Soft shadow with orange glow in dark mode (subtle glow)
       shadowColor: (colors as any).glassShadowGlow || '#000',
       shadowOffset: {

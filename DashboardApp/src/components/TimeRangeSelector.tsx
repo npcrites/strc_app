@@ -62,7 +62,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     marginBottom: 20,
   },
   timeRangeContainer: {
-    backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : colors.backgroundWhite, // Same as chart component in dark mode
+    backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : 'rgba(255, 255, 255, 0.95)', // Match chart component opacity in light mode
     borderRadius: 16,
     padding: 8,
     // Glass-like border (only in dark mode)

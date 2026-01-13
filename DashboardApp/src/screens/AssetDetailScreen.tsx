@@ -617,7 +617,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     paddingBottom: 12,
   },
   mainCard: {
-    backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : colors.backgroundWhite, // Use solid white in light mode
+    backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : 'rgba(255, 255, 255, 0.95)', // Semi-transparent white in light mode
     borderRadius: 16,
     marginHorizontal: 20,
     marginBottom: 20,
