@@ -732,21 +732,22 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     borderRadius: 6,
   },
   priceChangePercentPillPositive: {
-    backgroundColor: 'transparent',
+    backgroundColor: colors.green, // Colored background like home tab
   },
   priceChangePercentPillNegative: {
-    backgroundColor: 'transparent',
+    backgroundColor: colors.red, // Colored background like home tab
   },
   priceChangePercentPillText: {
     fontSize: 12,
-    fontWeight: '600',
-    fontFamily: 'Inter-SemiBold',
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold', // Use Chakra font like home tab
+    color: colors.backgroundWhite, // White text like home tab
   },
   priceChangePercentPillTextPositive: {
-    color: colors.green,
+    color: colors.backgroundWhite, // White text on green background
   },
   priceChangePercentPillTextNegative: {
-    color: colors.textSecondary,
+    color: colors.backgroundWhite, // White text on red background
   },
   tradingHoursContainer: {
     flexDirection: 'row',
