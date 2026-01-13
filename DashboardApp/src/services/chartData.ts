@@ -17,6 +17,7 @@ interface PricePoint {
 
 interface AssetPriceHistory {
   ticker: string;
+  name?: string;
   current_price: number | null;
   granularity: string;
   series: PricePoint[];

@@ -13,8 +13,13 @@ from app.core.security import get_current_user
 from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.models.position import Position
 from app.models.dividend import Dividend, DividendStatus
+from app.models.user import User
 from app.services.price_service import PriceService
+from app.services.position_sync_service import PositionSyncService
 from pydantic import BaseModel, Field
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
@@ -535,4 +540,55 @@ async def get_price_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting price status: {str(e)}"
+        )
+
+
+@router.post("/sync-positions")
+async def sync_positions(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    use_paper: bool = Query(True, description="Use paper trading account")
+):
+    """
+    Manually trigger a position sync from Alpaca for the current user.
+    This will update positions with latest data from Alpaca, including asset names.
+    
+    Returns:
+        Dictionary with sync statistics
+    """
+    try:
+        user_id = int(user.get("user_id"))
+        
+        # Get user from database
+        db_user = db.query(User).filter(User.id == user_id).first()
+        if not db_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if user has Alpaca credentials
+        if not db_user.alpaca_access_token and not db_user.alpaca_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User does not have Alpaca credentials configured"
+            )
+        
+        # Sync positions
+        position_sync_service = PositionSyncService()
+        stats = await position_sync_service.sync_user_positions(db, db_user, use_paper=use_paper)
+        
+        return {
+            "success": True,
+            "message": "Positions synced successfully",
+            "stats": stats
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error syncing positions: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error syncing positions: {str(e)}"
         )

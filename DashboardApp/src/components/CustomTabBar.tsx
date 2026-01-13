@@ -55,14 +55,15 @@ export default function CustomTabBar({
   const skipNextEffect = useRef(false); // Skip useEffect after drag completes
   const currentX = useRef(MARGIN); // Track current X position directly (fixes stopAnimation bug)
   
-  // Animation values for tab toggle - initialize for all routes
+  // Animation values for tab toggle - initialize based on active state
   const tabAnimations = useRef(
-    state.routes.map(() => ({
-      scale: new Animated.Value(1),
-      opacity: new Animated.Value(1),
+    state.routes.map((_, index) => ({
+      scale: new Animated.Value(state.index === index ? 1 : 0.9),
+      opacity: new Animated.Value(state.index === index ? 1 : 0.6),
     }))
   ).current;
   const previousTabIndex = useRef(state.index);
+  const hasInitialized = useRef(false);
   
   // Animation for sliding grey pill background
   const pillTranslateX = useRef(new Animated.Value(0)).current;
@@ -165,6 +166,22 @@ export default function CustomTabBar({
       console.error('Failed to save tab bar position:', error);
     }
   }, []);
+
+  // Initialize inactive tabs on mount
+  useEffect(() => {
+    if (!hasInitialized.current) {
+      const currentIndex = state.index;
+      // Set all tabs to their correct initial state
+      state.routes.forEach((_, index) => {
+        if (index !== currentIndex && index < tabAnimations.length) {
+          // Set inactive tabs to their inactive state immediately (no animation on mount)
+          tabAnimations[index].scale.setValue(0.9);
+          tabAnimations[index].opacity.setValue(0.6);
+        }
+      });
+      hasInitialized.current = true;
+    }
+  }, [state.routes, state.index, tabAnimations]);
 
   // Animate tab toggle when switching between tabs
   useEffect(() => {

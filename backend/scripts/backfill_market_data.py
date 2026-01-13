@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 def main():
     """Main function to backfill market data"""
     # Tickers to backfill
-    # Note: Using AAPL (Apple) as default - if you meant APPL, specify it via command line
-    tickers = ["AAPL", "STRC", "SATA"]
+    tickers = ["STRC", "STRD", "STRK", "STRF", "SATA"]
     
     # Check if user specified different tickers
     if len(sys.argv) > 1:

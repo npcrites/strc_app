@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # For production: use "https://alpaca.markets"
     
     # Allowed tickers for trading
-    ALLOWED_TICKERS: List[str] = ["STRC", "SATA"]
+    ALLOWED_TICKERS: List[str] = ["STRC", "STRD", "STRK", "STRF", "SATA"]
     
     # CORS (comma-separated string, will be split)
     # Includes Expo default ports: 19000 (Metro), 19006 (Expo Go), 8081 (Metro alternative)

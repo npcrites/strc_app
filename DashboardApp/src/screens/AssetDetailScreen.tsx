@@ -39,6 +39,7 @@ interface PricePoint {
 
 interface AssetPriceHistory {
   ticker: string;
+  name?: string;
   current_price: number | null;
   granularity: string;
   series: PricePoint[];
@@ -50,6 +51,13 @@ export default function AssetDetailScreen() {
   const route = useRoute<AssetDetailRouteProp>();
   const insets = useSafeAreaInsets();
   const screenWidth = Dimensions.get('window').width;
+  
+  // Font size constants for responsive alignment
+  const PRICE_FONT_SIZE = 42;
+  // Calculate margin to align gain/loss with center of $ sign
+  // The $ sign width is approximately 60% of font size, so half is ~30%
+  // Adjusted to account for visual centering (6px works well for 42px font)
+  const PRICE_CHANGE_MARGIN_LEFT = PRICE_FONT_SIZE * 0.143; // ~6px for 42px font
   
   const { ticker } = route.params;
   const [loading, setLoading] = useState(true);
@@ -376,14 +384,12 @@ export default function AssetDetailScreen() {
             onPress={() => navigation.goBack()}
             style={styles.backButton}
           >
-            <Text style={styles.backButtonText}>← Back</Text>
+            <Text style={styles.backButtonText}>←</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>{ticker}</Text>
-          <View style={styles.placeholder} />
-        </View>
-
-        {/* Current Price Section */}
-        <View style={styles.priceSection}>
+          <Text style={styles.assetName}>{data?.name || ticker}</Text>
+          <Text style={styles.tickerText}>{ticker}</Text>
+          
+          {/* Current Price */}
           <View style={styles.priceContainer}>
             <Text style={styles.currencySymbol}>$</Text>
             <View style={styles.priceValueContainer}>
@@ -522,14 +528,72 @@ export default function AssetDetailScreen() {
               </View>
             </View>
           </View>
-          <View style={styles.priceChangeContainer}>
+          <View style={[styles.priceChangeContainer, { marginLeft: PRICE_CHANGE_MARGIN_LEFT }]}>
             <Text style={[styles.priceChangeArrow, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
               {isPositive ? '↑' : '↓'}
             </Text>
             <Text style={[styles.priceChangeText, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
-              {formatCurrency(Math.abs(priceChange))} ({Math.abs(priceChangePercent).toFixed(2)}%)
+              {formatCurrency(Math.abs(priceChange))}
             </Text>
+            <View style={[
+              styles.priceChangePercentPill,
+              isPositive ? styles.priceChangePercentPillPositive : styles.priceChangePercentPillNegative
+            ]}>
+              <Text style={styles.priceChangePercentPillText}>
+                {Math.abs(priceChangePercent).toFixed(2)}%
+              </Text>
+            </View>
           </View>
+        </View>
+
+        {/* Chart */}
+        <View style={styles.chartContainer}>
+          {chartData.length > 0 ? (
+            <Chart
+              data={chartData}
+              height={250}
+              width={screenWidth - 40}
+              timeRange={timeRange}
+              tradingHoursMode={tradingHoursMode}
+              config={{
+                lineColor: Colors.chartOrange,
+                gradientStartColor: Colors.chartOrange,
+                gradientEndColor: Colors.chartOrange,
+                gradientStartOpacity: 0.3,
+                gradientEndOpacity: 0,
+                curved: timeRange !== '1W', // Straight lines for 1W (spiky), curves for longer timeframes
+                showDots: false,
+                enableDrag: true,
+              }}
+            />
+          ) : (
+            <View style={styles.noDataContainer}>
+              <Text style={styles.noDataText}>No price history available</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Time Range Selector */}
+        <View style={styles.timeRangeContainer}>
+          {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
+            <TouchableOpacity
+              key={range}
+              style={[
+                styles.timeRangeButton,
+                timeRange === range && styles.timeRangeButtonActive,
+              ]}
+              onPress={() => setTimeRange(range)}
+            >
+              <Text
+                style={[
+                  styles.timeRangeButtonText,
+                  timeRange === range && styles.timeRangeButtonTextActive,
+                ]}
+              >
+                {range}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* Trading Hours Mode Toggle */}
@@ -570,56 +634,6 @@ export default function AssetDetailScreen() {
             </TouchableOpacity>
           </View>
         </View>
-
-        {/* Chart */}
-        <View style={styles.chartContainer}>
-          {chartData.length > 0 ? (
-            <Chart
-              data={chartData}
-              height={250}
-              width={screenWidth - 40}
-              timeRange={timeRange}
-              tradingHoursMode={tradingHoursMode}
-              config={{
-                lineColor: isPositive ? Colors.greenDark : Colors.redDark,
-                gradientStartColor: isPositive ? Colors.greenDark : Colors.redDark,
-                gradientEndColor: isPositive ? Colors.greenDark : Colors.redDark,
-                gradientStartOpacity: 0.3,
-                gradientEndOpacity: 0,
-                curved: timeRange !== '1W', // Straight lines for 1W (spiky), curves for longer timeframes
-                showDots: false,
-                enableDrag: true,
-              }}
-            />
-          ) : (
-            <View style={styles.noDataContainer}>
-              <Text style={styles.noDataText}>No price history available</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Time Range Selector */}
-        <View style={styles.timeRangeContainer}>
-          {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
-            <TouchableOpacity
-              key={range}
-              style={[
-                styles.timeRangeButton,
-                timeRange === range && styles.timeRangeButtonActive,
-              ]}
-              onPress={() => setTimeRange(range)}
-            >
-              <Text
-                style={[
-                  styles.timeRangeButtonText,
-                  timeRange === range && styles.timeRangeButtonTextActive,
-                ]}
-              >
-                {range}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
       </ScrollView>
     </View>
   );
@@ -637,28 +651,34 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
   },
   backButton: {
     paddingVertical: 8,
-    paddingHorizontal: 4,
+    paddingLeft: 0,
+    paddingRight: 4,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
   },
   backButtonText: {
-    fontSize: 16,
+    fontSize: 24,
     color: Colors.orange,
     fontWeight: '600',
   },
-  headerTitle: {
-    fontSize: 20,
+  tickerText: {
+    fontSize: 24,
     fontWeight: 'bold',
     color: Colors.textPrimary,
+    marginBottom: 4,
   },
-  placeholder: {
-    width: 60, // Same width as back button to center title
+  assetName: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: Colors.textSecondary,
+    marginBottom: 12,
+    textAlign: 'left',
   },
   priceSection: {
     paddingHorizontal: 20,
@@ -667,10 +687,10 @@ const styles = StyleSheet.create({
   priceContainer: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    marginBottom: 8,
+    alignSelf: 'flex-start',
   },
   currencySymbol: {
-    fontSize: 24,
+    fontSize: 42,
     fontWeight: 'bold',
     color: Colors.textPrimary,
     marginRight: 4,
@@ -702,7 +722,8 @@ const styles = StyleSheet.create({
   },
   priceChangeContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'baseline',
+    marginTop: 2,
   },
   priceChangeArrow: {
     fontSize: 16,
@@ -718,9 +739,26 @@ const styles = StyleSheet.create({
   priceChangeNegative: {
     color: Colors.redDark,
   },
+  priceChangePercentPill: {
+    marginLeft: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  priceChangePercentPillPositive: {
+    backgroundColor: Colors.greenDark,
+  },
+  priceChangePercentPillNegative: {
+    backgroundColor: Colors.redDark,
+  },
+  priceChangePercentPillText: {
+    color: Colors.backgroundWhite,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   chartContainer: {
     paddingHorizontal: 20,
-    marginBottom: 24,
+    marginBottom: 12,
     minHeight: 250,
   },
   noDataContainer: {
@@ -782,7 +820,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundGrey,
   },
   timeRangeButtonActive: {
-    backgroundColor: Colors.backgroundGrey,
+    backgroundColor: Colors.textPrimary,
   },
   timeRangeButtonText: {
     fontSize: 14,
@@ -790,7 +828,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   timeRangeButtonTextActive: {
-    color: Colors.textPrimary,
+    color: Colors.backgroundWhite,
     fontWeight: '600',
   },
   loadingContainer: {

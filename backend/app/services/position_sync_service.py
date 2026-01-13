@@ -15,6 +15,98 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def condense_company_name(full_name: str) -> str:
+    """
+    Condense a company name by removing common suffixes and truncating if needed.
+    Handles multiple suffixes and preferred stock naming.
+    
+    Examples:
+        "Apple Inc." -> "Apple"
+        "Microsoft Corporation" -> "Microsoft"
+        "Strategy Inc Variable Rate Series A Perpetual Stretch Preferred Stock" -> "Strategy"
+        "Strategy Inc 10.00% Series A Perpetual Stride Preferred Stock" -> "Strategy"
+        "Strive, Inc. Variable Rate Series A Perpetual Preferred Stock" -> "Strive"
+    
+    Args:
+        full_name: Full company name from Alpaca
+    
+    Returns:
+        Condensed company name (max 30 chars, truncated at word boundary)
+    """
+    if not full_name:
+        return full_name
+    
+    condensed = full_name.strip()
+    
+    # Remove common legal suffixes (in order of specificity - most specific first)
+    suffixes = [
+        " Variable Rate Series A Perpetual Stretch Preferred Stock",
+        " Variable Rate Series A Perpetual Preferred Stock",
+        " 10.00% Series A Perpetual Stride Preferred Stock",
+        " 8.00% Series A Perpetual Strike Preferred Stock",
+        " 10.00% Series A Perpetual Strife Preferred Stock",
+        " Series A Perpetual Preferred Stock",
+        " Perpetual Preferred Stock",
+        " Preferred Stock",
+        " Common Stock",
+        " Class A Common Stock",
+        " Class B Common Stock",
+        " Class C Common Stock",
+        " Class A",
+        " Class B",
+        " Class C",
+        " Series A",
+        " Series B",
+        " Series C",
+        " Inc.",
+        " Inc",
+        " Incorporated",
+        " Corporation",
+        " Corp.",
+        " Corp",
+        " LLC",
+        " L.L.C.",
+        " Ltd.",
+        " Limited",
+        " Company",
+        " Co.",
+        " Co",
+        " Group",
+        " Holdings",
+    ]
+    
+    # Remove all suffixes (not just one) - keep removing until no more match
+    changed = True
+    while changed:
+        changed = False
+        for suffix in suffixes:
+            # Case-insensitive removal
+            if condensed.lower().endswith(suffix.lower()):
+                condensed = condensed[:-len(suffix)].strip()
+                changed = True
+                break
+    
+    # Remove leading "The " if present
+    if condensed.startswith("The "):
+        condensed = condensed[4:].strip()
+    
+    # Remove trailing comma if present (e.g., "Strive, Inc." -> "Strive")
+    if condensed.endswith(","):
+        condensed = condensed[:-1].strip()
+    
+    # If still too long, truncate at word boundary (max 30 chars)
+    if len(condensed) > 30:
+        # Try to truncate at a space
+        truncated = condensed[:30]
+        last_space = truncated.rfind(' ')
+        if last_space > 20:  # Only truncate at space if it's not too short
+            condensed = truncated[:last_space]
+        else:
+            condensed = truncated + "..."
+    
+    return condensed
+
+
 class PositionSyncService:
     """Service for syncing positions from Alpaca to database"""
     
@@ -115,8 +207,23 @@ class PositionSyncService:
                 }
                 asset_type = asset_type_map.get(asset_class, "other")
                 
-                # Get position name if available
-                position_name = alpaca_pos.get("symbol", ticker)
+                # Try to get asset name from Alpaca asset API
+                position_name = None
+                try:
+                    asset_info = await alpaca_service.get_asset(ticker)
+                    if asset_info:
+                        # Alpaca asset API returns 'name' field with company name
+                        full_name = asset_info.get("name")
+                        if full_name:
+                            # Condense the name (remove suffixes like "Inc.", "Corporation", etc.)
+                            position_name = condense_company_name(full_name)
+                            logger.info(f"Fetched asset name for {ticker}: {full_name} -> {position_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch asset name for {ticker}: {e}")
+                
+                # Fallback to symbol if we couldn't get the name
+                if not position_name:
+                    position_name = alpaca_pos.get("symbol", ticker)
                 
                 # Check if position exists
                 if ticker in existing_positions:

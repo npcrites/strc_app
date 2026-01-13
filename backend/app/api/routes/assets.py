@@ -12,6 +12,10 @@ from app.core.security import get_current_user
 from app.models.position_snapshot import PositionSnapshot
 from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.models.asset_price import AssetPrice
+from app.models.position import Position
+from app.models.user import User
+from app.services.position_sync_service import condense_company_name
+from app.services.alpaca_trading_service import AlpacaTradingService
 from app.services.dashboard.models.time_range import TimeRange, TimeGranularity
 from app.services.dashboard.queries.positions import _get_bucket_key
 from app.services.price_service import PriceService
@@ -37,6 +41,7 @@ class PricePoint(BaseModel):
 class AssetPriceHistory(BaseModel):
     """Asset price history response"""
     ticker: str
+    name: Optional[str] = None  # Full security name
     current_price: Optional[float]
     granularity: str
     series: List[PricePoint]
@@ -1830,6 +1835,11 @@ async def get_asset_price_history(
             )
             tr.start_date = adjusted_start
             tr.end_date = adjusted_end
+            # Normalize to timezone-aware (UTC) for consistency with database timestamps
+            if tr.start_date and tr.start_date.tzinfo is None:
+                tr.start_date = pytz.utc.localize(tr.start_date)
+            if tr.end_date.tzinfo is None:
+                tr.end_date = pytz.utc.localize(tr.end_date)
             logger.info(
                 f"Adjusted time range for market hours ({time_range}): "
                 f"start={tr.start_date}, end={tr.end_date}"
@@ -1885,6 +1895,11 @@ async def get_asset_price_history(
                 # 1Y = 365 calendar days
                 tr.start_date = tr.end_date - timedelta(days=365)
             # For "ALL", keep original start_date (None)
+            # Normalize to timezone-aware (UTC) for consistency with database timestamps
+            if tr.start_date and tr.start_date.tzinfo is None:
+                tr.start_date = pytz.utc.localize(tr.start_date)
+            if tr.end_date.tzinfo is None:
+                tr.end_date = pytz.utc.localize(tr.end_date)
             logger.info(
                 f"Adjusted time range for extended hours ({time_range}): "
                 f"start={tr.start_date}, end={tr.end_date} (calendar days - includes all hours/days)"
@@ -1895,6 +1910,54 @@ async def get_asset_price_history(
             func.upper(AssetPrice.symbol) == ticker_upper
         ).first()
         current_price = float(current_price_obj.price) if current_price_obj else None
+        
+        # Get asset name - try to fetch full name from Alpaca first, fallback to Position table
+        asset_name = None
+        
+        # Try to fetch full name from Alpaca asset API
+        try:
+            db_user = db.query(User).filter(User.id == user_id).first()
+            if db_user and (db_user.alpaca_access_token or db_user.alpaca_api_key):
+                alpaca_service = AlpacaTradingService(
+                    access_token=db_user.alpaca_access_token if db_user.alpaca_access_token else None,
+                    api_key=db_user.alpaca_api_key if db_user.alpaca_api_key else None,
+                    secret_key=db_user.alpaca_secret_key if db_user.alpaca_secret_key else None,
+                    use_paper=True
+                )
+                asset_info = await alpaca_service.get_asset(ticker_upper)
+                if asset_info and asset_info.get("name"):
+                    # Use full name from Alpaca (not condensed)
+                    asset_name = asset_info.get("name")
+                    logger.info(f"Fetched full asset name from Alpaca for {ticker_upper}: {asset_name}")
+                    logger.info(f"Full Alpaca asset response for {ticker_upper}: {asset_info}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch asset name from Alpaca for {ticker_upper}: {e}")
+        
+        # Fallback to Position table if Alpaca fetch failed
+        if not asset_name:
+            position = db.query(Position).filter(
+                and_(
+                    Position.user_id == user_id,
+                    func.upper(Position.ticker) == ticker_upper
+                )
+            ).first()
+            
+            if position and position.name:
+                # Check if name is different from ticker (case-insensitive)
+                if position.name.upper() != ticker_upper:
+                    # Use the name from Position table (already condensed, but we'll use it as-is)
+                    asset_name = position.name
+                    logger.info(f"Using condensed name from Position table for {ticker_upper}: {asset_name}")
+                else:
+                    # Name is same as ticker, treat as no name
+                    asset_name = None
+                    logger.debug(f"Position name for {ticker_upper} is same as ticker, ignoring")
+        
+        # Log for debugging
+        if asset_name:
+            logger.info(f"Using asset name for {ticker_upper}: {asset_name}")
+        else:
+            logger.warning(f"No asset name found for {ticker_upper} for user {user_id}")
         
         # Query position snapshots for this ticker within the time range
         query = db.query(
@@ -1933,9 +1996,17 @@ async def get_asset_price_history(
             f"start_date={tr.start_date}, query_start_date={query_start_date}, end_date={tr.end_date}, "
             f"time_range={time_range}, trading_hours_mode={trading_hours_mode}"
         )
+        # Ensure all datetimes are timezone-aware (UTC) for SQLAlchemy comparisons
+        # Database timestamps are timezone-aware, so filter datetimes must be too
         if query_start_date:
+            if query_start_date.tzinfo is None:
+                query_start_date = pytz.utc.localize(query_start_date)
             query = query.filter(PortfolioSnapshot.timestamp >= query_start_date)
-        query = query.filter(PortfolioSnapshot.timestamp <= tr.end_date)
+        if tr.end_date.tzinfo is None:
+            end_date_aware = pytz.utc.localize(tr.end_date)
+        else:
+            end_date_aware = tr.end_date
+        query = query.filter(PortfolioSnapshot.timestamp <= end_date_aware)
         
         # Order by timestamp
         query = query.order_by(PortfolioSnapshot.timestamp.asc())
@@ -2001,6 +2072,7 @@ async def get_asset_price_history(
             if historical_series:
                 return AssetPriceHistory(
                     ticker=ticker_upper,
+                    name=asset_name,
                     current_price=current_price,
                     granularity=tr.granularity.value,
                     series=historical_series
@@ -2010,6 +2082,7 @@ async def get_asset_price_history(
         if not snapshots:
             return AssetPriceHistory(
                 ticker=ticker_upper,
+                name=asset_name,
                 current_price=current_price,
                 granularity=tr.granularity.value,
                 series=[]
@@ -2320,7 +2393,13 @@ async def get_asset_price_history(
         if current_price and series:
             # Only add if it's newer than the last snapshot
             last_timestamp = series[-1].timestamp
+            # Ensure now is timezone-aware (UTC) to match database timestamps
             now = datetime.utcnow()
+            if now.tzinfo is None:
+                now = pytz.utc.localize(now)
+            # Ensure last_timestamp is timezone-aware for comparison
+            if last_timestamp.tzinfo is None:
+                last_timestamp = pytz.utc.localize(last_timestamp)
             if (now - last_timestamp).total_seconds() > 60:  # More than 1 minute difference
                 series.append(PricePoint(
                     timestamp=now,
@@ -2329,14 +2408,18 @@ async def get_asset_price_history(
                 ))
         elif current_price and not series:
             # If no historical data, just return current price
+            now = datetime.utcnow()
+            if now.tzinfo is None:
+                now = pytz.utc.localize(now)
             series = [PricePoint(
-                timestamp=datetime.utcnow(),
+                timestamp=now,
                 price=current_price,
                 value=None
             )]
         
         return AssetPriceHistory(
             ticker=ticker_upper,
+            name=asset_name,
             current_price=current_price,
             granularity=granularity.value,
             series=series

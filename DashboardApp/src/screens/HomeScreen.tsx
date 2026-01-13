@@ -17,7 +17,8 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AnimatedNumbers from 'react-native-animated-numbers';
 import { useAuth } from '../context/AuthContext';
 import { dashboardApi } from '../services/dashboard';
-import { DashboardSnapshot } from '../types';
+import { DashboardSnapshot, Position } from '../types';
+import { api } from '../services/api';
 import { formatCurrency, formatPercentage, formatDateShort } from '../utils/formatters';
 import { Colors } from '../constants/colors';
 import Chart from '../components/Chart';
@@ -73,6 +74,7 @@ export default function HomeScreen() {
   const [contentFilter, setContentFilter] = useState<ContentFilter>('Total');
   const [error, setError] = useState<string | null>(null);
   const [scrollEnabled, setScrollEnabled] = useState(true);
+  const [assetNames, setAssetNames] = useState<Record<string, string>>({});
   
   // Store all data for client-side filtering (Coinbase-style)
   const allDataRef = useRef<DashboardSnapshot | null>(null);
@@ -129,6 +131,9 @@ export default function HomeScreen() {
     
     // Load all data once (fetch with 'ALL' time range)
     loadAllData();
+    
+    // Fetch positions to get asset names
+    loadAssetNames();
     
     // Set up automatic refresh every 30 seconds to update prices & portfolio totals
     refreshIntervalRef.current = setInterval(() => {
@@ -292,6 +297,25 @@ export default function HomeScreen() {
       if (!abortController.signal.aborted && !isAutoRefresh) {
         setLoading(false);
       }
+    }
+  };
+
+  // Fetch positions to get asset names
+  const loadAssetNames = async () => {
+    if (!token) return;
+    
+    try {
+      const response = await api.get<{ positions: Position[] }>('/positions/', token);
+      const nameMap: Record<string, string> = {};
+      response.positions.forEach((position) => {
+        if (position.ticker && position.name) {
+          nameMap[position.ticker] = position.name;
+        }
+      });
+      setAssetNames(nameMap);
+    } catch (err) {
+      console.error('Error fetching asset names:', err);
+      // Don't show error to user, just use ticker as fallback
     }
   };
 
@@ -782,24 +806,24 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Time Range Selector */}
-      <View style={styles.timeRangeContainer}>
-        {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
+      {/* Content Filters - Total, Assets, Dividends */}
+      <View style={styles.filterContainer}>
+        {(['Total', 'Assets', 'Dividends'] as ContentFilter[]).map((filter) => (
           <TouchableOpacity
-            key={range}
+            key={filter}
             style={[
-              styles.timeRangeButton,
-              timeRange === range && styles.timeRangeButtonActive,
+              styles.filterButton,
+              contentFilter === filter && styles.filterButtonActive,
             ]}
-            onPress={() => setTimeRange(range)}
+            onPress={() => setContentFilter(filter)}
           >
             <Text
               style={[
-                styles.timeRangeButtonText,
-                timeRange === range && styles.timeRangeButtonTextActive,
+                styles.filterButtonText,
+                contentFilter === filter && styles.filterButtonTextActive,
               ]}
             >
-              {range}
+              {filter}
             </Text>
           </TouchableOpacity>
         ))}
@@ -826,28 +850,29 @@ export default function HomeScreen() {
             }}
           />
         </View>
-        {/* Content Filters - outside chart container to maintain proper alignment */}
-        <View style={styles.filterContainer}>
-          {(['Total', 'Assets', 'Dividends'] as ContentFilter[]).map((filter) => (
-            <TouchableOpacity
-              key={filter}
+      </View>
+
+      {/* Time Range Selector */}
+      <View style={styles.timeRangeContainer}>
+        {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
+          <TouchableOpacity
+            key={range}
+            style={[
+              styles.timeRangeButton,
+              timeRange === range && styles.timeRangeButtonActive,
+            ]}
+            onPress={() => setTimeRange(range)}
+          >
+            <Text
               style={[
-                styles.filterButton,
-                contentFilter === filter && styles.filterButtonActive,
+                styles.timeRangeButtonText,
+                timeRange === range && styles.timeRangeButtonTextActive,
               ]}
-              onPress={() => setContentFilter(filter)}
             >
-              <Text
-                style={[
-                  styles.filterButtonText,
-                  contentFilter === filter && styles.filterButtonTextActive,
-                ]}
-              >
-                {filter}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+              {range}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* By Asset Section */}
@@ -888,7 +913,7 @@ export default function HomeScreen() {
                 />
                 <View style={styles.assetItemText}>
                   <Text style={styles.assetTicker}>{item.ticker}</Text>
-                  <Text style={styles.assetName}>{item.ticker}</Text>
+                  <Text style={styles.assetName}>{assetNames[item.ticker] || item.ticker}</Text>
                 </View>
               </View>
               <View style={styles.assetItemRight}>
@@ -1060,7 +1085,8 @@ const styles = StyleSheet.create({
   timeRangeContainer: {
     flexDirection: 'row',
     paddingHorizontal: 20,
-    marginBottom: 20,
+    marginTop: 8,
+    marginBottom: 24,
     gap: 8,
   },
   timeRangeButton: {
@@ -1094,8 +1120,8 @@ const styles = StyleSheet.create({
   filterContainer: {
     flexDirection: 'row',
     paddingHorizontal: 20, // Match assetSection padding
-    marginTop: 8,
-    marginBottom: 24,
+    marginTop: 0,
+    marginBottom: 20,
     gap: 8,
   },
   filterButton: {

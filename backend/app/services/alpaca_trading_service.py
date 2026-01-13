@@ -213,4 +213,23 @@ class AlpacaTradingService:
                 return None
             response.raise_for_status()
             return response.json()
+    
+    async def get_asset(self, symbol: str) -> Optional[Dict]:
+        """
+        Get asset details including company name from Alpaca
+        
+        Args:
+            symbol: Stock symbol (e.g., "AAPL")
+        
+        Returns:
+            Asset dict with name and other details, or None if not found
+        """
+        url = f"{self.base_url}/v2/assets/{symbol.upper()}"
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=self._get_headers())
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
 
