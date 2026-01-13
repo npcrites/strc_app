@@ -1,6 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import * as Font from 'expo-font';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ThemeProvider } from './src/context/ThemeContext';
 import BottomTabs from './src/navigation/BottomTabs';
@@ -39,6 +40,10 @@ function AppNavigator() {
       <Stack.Navigator 
         screenOptions={{ 
           headerShown: false,
+          headerBackVisible: false,
+          headerBackTitleVisible: false,
+          headerLeft: () => null,
+          header: () => null,
           animation: 'fade', // Fade transition for all screens
         }}
       >
@@ -55,14 +60,26 @@ function AppNavigator() {
               name="AssetDetail" 
               component={AssetDetailScreen}
               options={{
+                headerShown: false,
+                headerBackVisible: false,
+                headerBackTitleVisible: false,
+                headerLeft: () => null,
+                header: () => null,
                 animation: 'slide_from_right',
+                gestureEnabled: true,
               }}
             />
             <Stack.Screen 
               name="Settings" 
               component={SettingsScreen}
               options={{
+                headerShown: false,
+                headerBackVisible: false,
+                headerBackTitleVisible: false,
+                headerLeft: () => null,
+                header: () => null,
                 animation: 'slide_from_right',
+                gestureEnabled: true,
               }}
             />
           </>
@@ -81,11 +98,38 @@ function AppNavigator() {
 }
 
 export default function App() {
+  const [fontsLoaded, setFontsLoaded] = useState(false);
+
+  useEffect(() => {
+    async function loadFonts() {
+      try {
+        await Font.loadAsync({
+          'ChakraPetch': require('./src/assets/fonts/ChakraPetch-Regular.ttf'),
+          'ChakraPetch-Bold': require('./src/assets/fonts/ChakraPetch-Bold.ttf'),
+          'Inter': require('./src/assets/fonts/Inter-Regular.ttf'),
+          'Inter-Medium': require('./src/assets/fonts/Inter-Medium.ttf'),
+          'Inter-SemiBold': require('./src/assets/fonts/Inter-SemiBold.ttf'),
+          'Inter-Bold': require('./src/assets/fonts/Inter-Bold.ttf'),
+        });
+        setFontsLoaded(true);
+      } catch (error) {
+        console.warn('Error loading fonts:', error);
+        // Continue even if fonts fail to load - will use system fonts
+        setFontsLoaded(true);
+      }
+    }
+    loadFonts();
+  }, []);
+
+  if (!fontsLoaded) {
+    return null; // Or a loading screen
+  }
+
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AppNavigator />
-      </AuthProvider>
+    <AuthProvider>
+      <AppNavigator />
+    </AuthProvider>
     </ThemeProvider>
   );
 }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,16 @@ export default function SettingsScreen() {
   const handleLogout = async () => {
     await logout();
   };
+
+  // Ensure header is never shown (prevents default back arrow from appearing)
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+      headerBackVisible: false,
+      headerLeft: () => null,
+      header: () => null,
+    });
+  }, [navigation]);
 
   const styles = createStyles(Colors);
 
@@ -59,9 +69,9 @@ export default function SettingsScreen() {
             <Switch
               value={isDark}
               onValueChange={toggleTheme}
-              trackColor={{ false: Colors.backgroundGrey, true: Colors.orange }}
-              thumbColor={Colors.backgroundWhite}
-              ios_backgroundColor={Colors.backgroundGrey}
+              trackColor={{ false: getColors(isDark).backgroundGrey, true: getColors(isDark).orange }}
+              thumbColor={getColors(isDark).backgroundWhite}
+              ios_backgroundColor={getColors(isDark).backgroundGrey}
             />
           </View>
 

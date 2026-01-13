@@ -13,9 +13,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../constants/colors';
+import { useTheme } from '../context/ThemeContext';
+import { getColors } from '../constants/colors';
 import HomeIcon from './icons/HomeIcon';
+import ActivityIcon from './icons/ActivityIcon';
 
 interface Tab {
   name: string;
@@ -42,8 +45,12 @@ export default function CustomTabBar({
   descriptors,
   navigation,
 }: CustomTabBarProps) {
+  const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const screenWidth = Dimensions.get('window').width;
+  
+  // Initialize styles early
+  const styles = useMemo(() => createStyles(getColors(isDark), isDark), [isDark]);
   
   // === STATE (single source of truth) ===
   const [positionIndex, setPositionIndex] = useState<number>(0); // 0 = left, 1 = right
@@ -544,17 +551,27 @@ export default function CustomTabBar({
   const content = (
     <>
       <View style={styles.dragHandle} pointerEvents="box-none" />
-      <View style={styles.tabBar} pointerEvents="box-none">
-        {/* Sliding grey pill background */}
-        <Animated.View
-          style={[
-            styles.slidingPill,
-            {
-              transform: [{ translateX: pillTranslateX }],
-              width: pillWidth,
-            },
-          ]}
+      {/* Liquid glass blur effect for light mode */}
+      {!isDark && (
+        <BlurView
+          intensity={40}
+          tint="light"
+          style={StyleSheet.absoluteFill}
         />
+      )}
+      <View style={styles.tabBar} pointerEvents="box-none">
+        {/* Sliding grey pill background - hidden in light mode neumorphic design */}
+        {isDark && (
+          <Animated.View
+            style={[
+              styles.slidingPill,
+              {
+                transform: [{ translateX: pillTranslateX }],
+                width: pillWidth,
+              },
+            ]}
+          />
+        )}
         {state.routes.map((route: any, index: number) => {
           const { options } = descriptors[route.key];
           const isFocused = state.index === index;
@@ -591,7 +608,10 @@ export default function CustomTabBar({
               <Animated.View
                 style={[
                   styles.tabButtonInner,
-                  // Remove background color - the sliding pill provides it
+                  // Neumorphic styling for light mode - only for active tab
+                  !isDark && isFocused && styles.tabButtonInnerActiveNeumorphic,
+                  // Inactive tabs in light mode have no background
+                  !isDark && !isFocused && { backgroundColor: 'transparent' },
                   index < tabAnimations.length && {
                     transform: [
                       { scale: tabAnimations[index].scale },
@@ -601,35 +621,24 @@ export default function CustomTabBar({
                 ]}
               >
                 {tab?.name === 'Home' ? (
-                  <HomeIcon
-                    size={20}
-                    color={
-                      isFocused
-                        ? Colors.orange
-                        : Colors.textPrimary
-                    }
-                  />
+                  <HomeIcon size={26} />
+                ) : tab?.name === 'Activity' ? (
+                  <ActivityIcon size={26} />
                 ) : (
                   <Ionicons
                     name={tab?.iconName || 'ellipse'}
-                    size={20}
+                    size={26}
                     color={
-                      isFocused
-                        ? Colors.orange
-                        : Colors.textPrimary
+                      !isDark && isFocused
+                        ? '#666666' // Darker gray for active in neumorphic
+                        : !isDark && !isFocused
+                        ? '#999999' // Lighter gray for inactive in neumorphic
+                        : isFocused
+                        ? getColors(isDark).orange
+                        : getColors(isDark).textPrimary
                     }
                   />
                 )}
-                <Text
-                  style={[
-                    styles.tabLabel,
-                    isFocused
-                      ? styles.tabLabelActive
-                      : styles.tabLabelInactive,
-                  ]}
-                >
-                  {tab?.label || route.name}
-                </Text>
               </Animated.View>
             </TouchableOpacity>
           );
@@ -662,22 +671,38 @@ export default function CustomTabBar({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => StyleSheet.create({
   container: {
     position: 'absolute',
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : Colors.backgroundWhite,
-    borderRadius: 24,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: Platform.OS === 'ios' ? 0.15 : 0.1,
-    shadowRadius: Platform.OS === 'ios' ? 12 : 8,
-    elevation: 8,
-    overflow: 'hidden',
+    backgroundColor: isDark 
+      ? (Platform.OS === 'ios' ? 'transparent' : colors.backgroundWhite)
+      : 'rgba(255, 255, 255, 0.2)', // More transparent white for liquid glass effect
+    borderRadius: 35, // More circular for the nav bar container
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    overflow: 'hidden', // Ensure blur effect is contained
+    // Neumorphic shadows for light mode
+    ...(isDark ? {
+      shadowColor: '#000',
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: Platform.OS === 'ios' ? 0.08 : 0.05, // More subtle glow
+      shadowRadius: Platform.OS === 'ios' ? 6 : 4, // Smaller radius for subtlety
+      elevation: 4, // Reduced elevation
+    } : {
+      // Neumorphic embossed effect - light shadow on top-left, dark shadow on bottom-right
+      shadowColor: '#FFFFFF',
+      shadowOffset: {
+        width: -4,
+        height: -4,
+      },
+      shadowOpacity: 0.7,
+      shadowRadius: 8,
+      elevation: 0,
+      overflow: 'hidden', // Ensure blur effect is contained
+    }),
   },
   dragHandle: {
     position: 'absolute',
@@ -701,37 +726,54 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    minWidth: 90,
-    gap: 6,
-    backgroundColor: 'transparent', // Transparent - sliding pill provides background
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    borderRadius: 30, // More circular
+    minWidth: 65,
+    backgroundColor: isDark ? 'transparent' : '#E8E8E8', // Light gray for neumorphic
+  },
+  tabButtonInnerActiveNeumorphic: {
+    // Pressed-in effect (debossed) for active tab in light mode
+    backgroundColor: '#FFFFFF', // White for the active pill
+    borderRadius: 30, // More circular
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 2,
+      height: 2,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    // Inner shadow effect using border (simulated)
+    borderWidth: 0,
+    // Use elevation for Android
+    elevation: -2,
   },
   slidingPill: {
     position: 'absolute',
-    backgroundColor: Colors.backgroundGrey,
+    backgroundColor: colors.backgroundGrey,
     borderRadius: 20,
     height: '100%',
     zIndex: 0,
+    // Only show in dark mode (neumorphic design doesn't use sliding pill)
+    opacity: isDark ? 1 : 0,
   },
   tabIcon: {
     // Icon size is controlled by the Ionicons size prop
   },
   tabIconActive: {
-    color: Colors.orange,
+    color: colors.orange,
   },
   tabIconInactive: {
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
   },
   tabLabel: {
     fontSize: 14,
     fontWeight: '500',
   },
   tabLabelActive: {
-    color: Colors.orange,
+    color: colors.orange,
   },
   tabLabelInactive: {
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
   },
 });

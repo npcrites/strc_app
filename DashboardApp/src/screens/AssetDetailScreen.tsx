@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Fragment, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StatusBar,
-  Dimensions,
   Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,14 +14,15 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AnimatedNumbers from 'react-native-animated-numbers';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { api } from '../services/api';
 import { formatCurrency } from '../utils/formatters';
-import { Colors } from '../constants/colors';
-import Chart from '../components/Chart';
+import { getColors } from '../constants/colors';
+import AssetChart from '../components/AssetChart';
+import TimeRangeSelector, { TimeRange } from '../components/TimeRangeSelector';
+import BackButton from '../components/BackButton';
 import { fetchAssetPriceHistory, transformToChartData, invalidateChartCache } from '../services/chartData';
 import { TradingHoursMode } from '../utils/marketHours';
-
-type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
 
 type RootStackParamList = {
   AssetDetail: { ticker: string };
@@ -47,10 +47,13 @@ interface AssetPriceHistory {
 
 export default function AssetDetailScreen() {
   const { token } = useAuth();
+  const { isDark } = useTheme();
   const navigation = useNavigation<AssetDetailNavigationProp>();
   const route = useRoute<AssetDetailRouteProp>();
   const insets = useSafeAreaInsets();
-  const screenWidth = Dimensions.get('window').width;
+  
+  // Initialize styles early so they're available for early returns
+  const styles = useMemo(() => createStyles(getColors(isDark), isDark), [isDark]);
   
   // Font size constants for responsive alignment
   const PRICE_FONT_SIZE = 42;
@@ -65,6 +68,16 @@ export default function AssetDetailScreen() {
   const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
   const [tradingHoursMode, setTradingHoursMode] = useState<TradingHoursMode>('market');
   const [error, setError] = useState<string | null>(null);
+
+  // Ensure header is never shown (prevents default back arrow from appearing)
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+      headerBackVisible: false,
+      headerLeft: () => null,
+      header: () => null,
+    });
+  }, [navigation]);
   // Track previous timeRange to detect changes
   const previousTimeRangeRef = useRef<TimeRange>('1Y');
   // Preserve previous data only when switching trading hours modes (same timeRange)
@@ -77,7 +90,7 @@ export default function AssetDetailScreen() {
   const priceDirectionRef = useRef<'increasing' | 'decreasing' | null>(null);
   const colorOpacityAnim = useRef(new Animated.Value(0)).current;
   const fadeOutTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const [priceColor, setPriceColor] = useState<string>(Colors.textPrimary);
+  const [priceColor, setPriceColor] = useState<string>(getColors(isDark).textPrimary);
 
   const timeRangeMap: Record<TimeRange, string> = {
     '1W': '1W',
@@ -257,10 +270,10 @@ export default function AssetDetailScreen() {
     if (previousValue !== null && currentValue !== previousValue && leftmostChangePosition !== -1) {
       if (isIncrease) {
         priceDirectionRef.current = 'increasing';
-        setPriceColor(Colors.orange);
+        setPriceColor(getColors(isDark).orange);
       } else {
         priceDirectionRef.current = 'decreasing';
-        setPriceColor(Colors.textSecondary);
+        setPriceColor(getColors(isDark).textSecondary);
       }
 
       previousPriceRef.current = currentValue;
@@ -281,7 +294,7 @@ export default function AssetDetailScreen() {
           useNativeDriver: false,
         }).start(() => {
           priceDirectionRef.current = null;
-          setPriceColor(Colors.textPrimary);
+          setPriceColor(getColors(isDark).textPrimary);
         });
       }, 1000);
     } else if (previousValue === null) {
@@ -301,17 +314,12 @@ export default function AssetDetailScreen() {
   if (loading && !data && !previousDataRef.current) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-          >
-            <Text style={styles.backButtonText}>← Back</Text>
-          </TouchableOpacity>
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+        <View style={styles.topBar}>
+          <BackButton onPress={() => navigation.goBack()} />
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.orange} />
+          <ActivityIndicator size="large" color={getColors(isDark).orange} />
           <Text style={styles.loadingText}>Loading asset data...</Text>
         </View>
       </View>
@@ -321,14 +329,9 @@ export default function AssetDetailScreen() {
   if (error) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-          >
-            <Text style={styles.backButtonText}>← Back</Text>
-          </TouchableOpacity>
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+        <View style={styles.topBar}>
+          <BackButton onPress={() => navigation.goBack()} />
         </View>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
@@ -349,14 +352,9 @@ export default function AssetDetailScreen() {
   if (!data) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-          >
-            <Text style={styles.backButtonText}>← Back</Text>
-          </TouchableOpacity>
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+        <View style={styles.topBar}>
+          <BackButton onPress={() => navigation.goBack()} />
         </View>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>No data available</Text>
@@ -372,255 +370,240 @@ export default function AssetDetailScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-          >
-            <Text style={styles.backButtonText}>←</Text>
-          </TouchableOpacity>
-          <Text style={styles.assetName}>{data?.name || ticker}</Text>
-          <Text style={styles.tickerText}>{ticker}</Text>
-          
-          {/* Current Price */}
-          <View style={styles.priceContainer}>
-            <Text style={styles.currencySymbol}>$</Text>
-            <View style={styles.priceValueContainer}>
-              <View style={styles.priceValueWrapper}>
-                {/* Default color layer */}
-                <Animated.View
-                  style={{
-                    opacity: colorOpacityAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1, 0],
-                    }),
-                  }}
-                >
-                  <View style={styles.priceValueContainer}>
-                    {/* Render dollars digits with commas */}
-                    {dollarsStr.split('').map((digit, index) => {
-                      const currentDigit = parseInt(digit);
-                      const shouldAnimate = leftmostChangePosition !== -1 && index >= leftmostChangePosition;
-                      // Add comma before every 3rd digit from right (except the last group)
-                      const shouldAddComma = index > 0 && (dollarsStr.length - index) % 3 === 0;
-                      
-                      return (
-                        <React.Fragment key={index}>
-                          {shouldAddComma && (
-                            <Text style={[styles.priceValue, { color: Colors.textPrimary }]}>,
-                            </Text>
-                          )}
-                          {shouldAnimate ? (
-                            <AnimatedNumbers
-                              animateToNumber={currentDigit}
-                              fontStyle={[styles.priceValue, { color: Colors.textPrimary }]}
-                              animationDuration={800}
-                              includeComma={false}
-                            />
-                          ) : (
-                            <Text style={[styles.priceValue, { color: Colors.textPrimary }]}>
-                              {digit}
-                            </Text>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                    <Text style={[styles.priceDecimalDot, { color: Colors.textPrimary }]}>.</Text>
-                    {leftmostChangePosition !== -1 && leftmostChangePosition <= dollarsStr.length ? (
-                      <AnimatedNumbers
-                        animateToNumber={centsTens}
-                        fontStyle={[styles.priceDecimal, { color: Colors.textPrimary }]}
-                        animationDuration={800}
-                        includeComma={false}
-                      />
-                    ) : (
-                      <Text style={[styles.priceDecimal, { color: Colors.textPrimary }]}>
-                        {centsTens}
-                      </Text>
-                    )}
-                    {leftmostChangePosition !== -1 && leftmostChangePosition <= dollarsStr.length + 1 ? (
-                      <AnimatedNumbers
-                        animateToNumber={centsOnes}
-                        fontStyle={[styles.priceDecimal, { color: Colors.textPrimary }]}
-                        animationDuration={800}
-                        includeComma={false}
-                      />
-                    ) : (
-                      <Text style={[styles.priceDecimal, { color: Colors.textPrimary }]}>
-                        {centsOnes}
-                      </Text>
-                    )}
-                  </View>
-                </Animated.View>
-                {/* Animated color layer */}
-                <Animated.View
-                  style={[
-                    StyleSheet.absoluteFill,
-                    {
-                      opacity: colorOpacityAnim,
-                    },
-                  ]}
-                  pointerEvents="none"
-                >
-                  <View style={styles.priceValueContainer}>
-                    {/* Render dollars digits with commas */}
-                    {dollarsStr.split('').map((digit, index) => {
-                      const currentDigit = parseInt(digit);
-                      const shouldAnimate = leftmostChangePosition !== -1 && index >= leftmostChangePosition;
-                      // Add comma before every 3rd digit from right (except the last group)
-                      const shouldAddComma = index > 0 && (dollarsStr.length - index) % 3 === 0;
-                      
-                      return (
-                        <React.Fragment key={index}>
-                          {shouldAddComma && (
-                            <Text style={[styles.priceValue, { color: priceColor }]}>,
-                            </Text>
-                          )}
-                          {shouldAnimate ? (
-                            <AnimatedNumbers
-                              animateToNumber={currentDigit}
-                              fontStyle={[styles.priceValue, { color: priceColor }]}
-                              animationDuration={800}
-                              includeComma={false}
-                            />
-                          ) : (
-                            <Text style={[styles.priceValue, { color: priceColor }]}>
-                              {digit}
-                            </Text>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                    <Text style={[styles.priceDecimalDot, { color: priceColor }]}>.</Text>
-                    {leftmostChangePosition !== -1 && leftmostChangePosition <= dollarsStr.length ? (
-                      <AnimatedNumbers
-                        animateToNumber={centsTens}
-                        fontStyle={[styles.priceDecimal, { color: priceColor }]}
-                        animationDuration={800}
-                        includeComma={false}
-                      />
-                    ) : (
-                      <Text style={[styles.priceDecimal, { color: priceColor }]}>
-                        {centsTens}
-                      </Text>
-                    )}
-                    {leftmostChangePosition !== -1 && leftmostChangePosition <= dollarsStr.length + 1 ? (
-                      <AnimatedNumbers
-                        animateToNumber={centsOnes}
-                        fontStyle={[styles.priceDecimal, { color: priceColor }]}
-                        animationDuration={800}
-                        includeComma={false}
-                      />
-                    ) : (
-                      <Text style={[styles.priceDecimal, { color: priceColor }]}>
-                        {centsOnes}
-                      </Text>
-                    )}
-                  </View>
-                </Animated.View>
+        {/* Back Button - Outside Card */}
+        <View style={styles.topBar}>
+          <BackButton onPress={() => navigation.goBack()} />
+        </View>
+
+        {/* Main Card - Contains Header and Chart */}
+        <View style={styles.mainCard}>
+          {/* Header Content */}
+          <View style={styles.header}>
+            <Text style={styles.assetName}>{data?.name || ticker}</Text>
+            <Text style={styles.tickerText}>{ticker}</Text>
+            
+            {/* Current Price */}
+            <View style={styles.priceContainer}>
+              <Text style={styles.currencySymbol}>$</Text>
+              <View style={styles.priceValueContainer}>
+                <View style={styles.priceValueWrapper}>
+                  {/* Default color layer */}
+                  <Animated.View
+                    style={{
+                      opacity: colorOpacityAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 0],
+                      }),
+                    }}
+                  >
+                    <View style={styles.priceValueContainer}>
+                      {/* Render dollars digits with commas */}
+                      {dollarsStr.split('').map((digit, index) => {
+                        const currentDigit = parseInt(digit);
+                        const shouldAnimate = leftmostChangePosition !== -1 && index >= leftmostChangePosition;
+                        // Add comma before every 3rd digit from right (except the last group)
+                        const shouldAddComma = index > 0 && (dollarsStr.length - index) % 3 === 0;
+                        
+                        return (
+                          <React.Fragment key={index}>
+                            {shouldAddComma && (
+                              <Text style={[styles.priceValue, { color: getColors(isDark).textPrimary }]}>,
+                              </Text>
+                            )}
+                            {shouldAnimate ? (
+                              <AnimatedNumbers
+                                animateToNumber={currentDigit}
+                                fontStyle={[styles.priceValue, { color: getColors(isDark).textPrimary }]}
+                                animationDuration={800}
+                                includeComma={false}
+                              />
+                            ) : (
+                              <Text style={[styles.priceValue, { color: getColors(isDark).textPrimary }]}>
+                                {digit}
+                              </Text>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                      <Text style={[styles.priceDecimalDot, { color: getColors(isDark).textPrimary }]}>.</Text>
+                      {leftmostChangePosition !== -1 && leftmostChangePosition <= dollarsStr.length ? (
+                        <AnimatedNumbers
+                          animateToNumber={centsTens}
+                          fontStyle={[styles.priceDecimal, { color: getColors(isDark).textPrimary }]}
+                          animationDuration={800}
+                          includeComma={false}
+                        />
+                      ) : (
+                        <Text style={[styles.priceDecimal, { color: getColors(isDark).textPrimary }]}>
+                          {centsTens}
+                        </Text>
+                      )}
+                      {leftmostChangePosition !== -1 && leftmostChangePosition <= dollarsStr.length + 1 ? (
+                        <AnimatedNumbers
+                          animateToNumber={centsOnes}
+                          fontStyle={[styles.priceDecimal, { color: getColors(isDark).textPrimary }]}
+                          animationDuration={800}
+                          includeComma={false}
+                        />
+                      ) : (
+                        <Text style={[styles.priceDecimal, { color: getColors(isDark).textPrimary }]}>
+                          {centsOnes}
+                        </Text>
+                      )}
+                    </View>
+                  </Animated.View>
+                  {/* Animated color layer */}
+                  <Animated.View
+                    style={[
+                      StyleSheet.absoluteFill,
+                      {
+                        opacity: colorOpacityAnim,
+                      },
+                    ]}
+                    pointerEvents="none"
+                  >
+                    <View style={styles.priceValueContainer}>
+                      {/* Render dollars digits with commas */}
+                      {dollarsStr.split('').map((digit, index) => {
+                        const currentDigit = parseInt(digit);
+                        const shouldAnimate = leftmostChangePosition !== -1 && index >= leftmostChangePosition;
+                        // Add comma before every 3rd digit from right (except the last group)
+                        const shouldAddComma = index > 0 && (dollarsStr.length - index) % 3 === 0;
+                        
+                        return (
+                          <React.Fragment key={index}>
+                            {shouldAddComma && (
+                              <Text style={[styles.priceValue, { color: priceColor }]}>,
+                              </Text>
+                            )}
+                            {shouldAnimate ? (
+                              <AnimatedNumbers
+                                animateToNumber={currentDigit}
+                                fontStyle={[styles.priceValue, { color: priceColor }]}
+                                animationDuration={800}
+                                includeComma={false}
+                              />
+                            ) : (
+                              <Text style={[styles.priceValue, { color: priceColor }]}>
+                                {digit}
+                              </Text>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                      <Text style={[styles.priceDecimalDot, { color: priceColor }]}>.</Text>
+                      {leftmostChangePosition !== -1 && leftmostChangePosition <= dollarsStr.length ? (
+                        <AnimatedNumbers
+                          animateToNumber={centsTens}
+                          fontStyle={[styles.priceDecimal, { color: priceColor }]}
+                          animationDuration={800}
+                          includeComma={false}
+                        />
+                      ) : (
+                        <Text style={[styles.priceDecimal, { color: priceColor }]}>
+                          {centsTens}
+                        </Text>
+                      )}
+                      {leftmostChangePosition !== -1 && leftmostChangePosition <= dollarsStr.length + 1 ? (
+                        <AnimatedNumbers
+                          animateToNumber={centsOnes}
+                          fontStyle={[styles.priceDecimal, { color: priceColor }]}
+                          animationDuration={800}
+                          includeComma={false}
+                        />
+                      ) : (
+                        <Text style={[styles.priceDecimal, { color: priceColor }]}>
+                          {centsOnes}
+                        </Text>
+                      )}
+                    </View>
+                  </Animated.View>
+                </View>
               </View>
             </View>
-          </View>
-          <View style={styles.priceChangeRow}>
-            <View style={[styles.priceChangeContainer, { marginLeft: PRICE_CHANGE_MARGIN_LEFT }]}>
-              <Text style={[styles.priceChangeArrow, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
-                {isPositive ? '↑' : '↓'}
-              </Text>
-              <Text style={[styles.priceChangeText, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
-                {formatCurrency(Math.abs(priceChange))}
-              </Text>
-              <View style={[
-                styles.priceChangePercentPill,
-                isPositive ? styles.priceChangePercentPillPositive : styles.priceChangePercentPillNegative
-              ]}>
-                <Text style={[
-                  styles.priceChangePercentPillText,
-                  isPositive ? styles.priceChangePercentPillTextPositive : styles.priceChangePercentPillTextNegative
+            <View style={styles.priceChangeRow}>
+              <View style={[styles.priceChangeContainer, { marginLeft: PRICE_CHANGE_MARGIN_LEFT }]}>
+                <Text style={[styles.priceChangeArrow, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
+                  {isPositive ? '↑' : '↓'}
+                </Text>
+                <Text style={[styles.priceChangeText, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
+                  {formatCurrency(Math.abs(priceChange))}
+                </Text>
+                <View style={[
+                  styles.priceChangePercentPill,
+                  isPositive ? styles.priceChangePercentPillPositive : styles.priceChangePercentPillNegative
                 ]}>
-                  {Math.abs(priceChangePercent).toFixed(2)}%
-                </Text>
+                  <Text style={[
+                    styles.priceChangePercentPillText,
+                    isPositive ? styles.priceChangePercentPillTextPositive : styles.priceChangePercentPillTextNegative
+                  ]}>
+                    {Math.abs(priceChangePercent).toFixed(2)}%
+                  </Text>
+                </View>
+              </View>
+              {/* RTH/ETH Toggle */}
+              <View style={styles.rthEthContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.rthEthToggle,
+                    tradingHoursMode === 'market' && styles.rthEthToggleActive,
+                  ]}
+                  onPress={() => setTradingHoursMode('market')}
+                >
+                  <Text style={[
+                    styles.rthEthButtonText,
+                    tradingHoursMode === 'market' && styles.rthEthButtonTextActive,
+                  ]}>
+                    RTH
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.rthEthToggle,
+                    tradingHoursMode === 'extended' && styles.rthEthToggleActive,
+                  ]}
+                  onPress={() => setTradingHoursMode('extended')}
+                >
+                  <Text style={[
+                    styles.rthEthButtonText,
+                    tradingHoursMode === 'extended' && styles.rthEthButtonTextActive,
+                  ]}>
+                    ETH
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
-            {/* RTH/ETH Toggle */}
-            <TouchableOpacity
-              style={styles.rthEthToggle}
-              onPress={() => setTradingHoursMode(tradingHoursMode === 'market' ? 'extended' : 'market')}
-            >
-              <Text style={styles.rthEthButtonText}>
-                {tradingHoursMode === 'market' ? 'RTH' : 'ETH'}
-              </Text>
-            </TouchableOpacity>
           </View>
+
+          {/* Chart */}
+          <AssetChart
+            data={chartData}
+            timeRange={timeRange}
+            tradingHoursMode={tradingHoursMode}
+            isPositive={isPositive}
+          />
         </View>
 
-        {/* Chart */}
-        <View style={styles.chartContainer}>
-          {chartData.length > 0 ? (
-            <Chart
-              data={chartData}
-              height={250}
-              width={screenWidth}
-              timeRange={timeRange}
-              tradingHoursMode={tradingHoursMode}
-              config={{
-                lineColor: isPositive ? Colors.orange : Colors.textSecondary,
-                gradientStartColor: isPositive ? Colors.orange : Colors.textSecondary,
-                gradientEndColor: isPositive ? Colors.orange : Colors.textSecondary,
-                gradientStartOpacity: 0.3,
-                gradientEndOpacity: 0,
-                curved: timeRange !== '1W', // Straight lines for 1W (spiky), curves for longer timeframes
-                showDots: false,
-                enableDrag: true,
-                fadeIntensity: 0.75, // Increased fade intensity for more pronounced effect
-              }}
-            />
-          ) : (
-            <View style={styles.noDataContainer}>
-              <Text style={styles.noDataText}>No price history available</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Time Range Selector */}
-        <View style={styles.timeRangeContainer}>
-          <View style={styles.timeRangeButtons}>
-            {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
-              <TouchableOpacity
-                key={range}
-                style={[
-                  styles.timeRangeButton,
-                  timeRange === range && styles.timeRangeButtonActive,
-                ]}
-                onPress={() => setTimeRange(range)}
-              >
-                <Text
-                  style={[
-                    styles.timeRangeButtonText,
-                    timeRange === range && styles.timeRangeButtonTextActive,
-                  ]}
-                >
-                  {range}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+        {/* Time Range Selector - Outside Card */}
+        <TimeRangeSelector
+          value={timeRange}
+          onChange={setTimeRange}
+        />
       </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background, // Warm dark background in dark mode
   },
   scrollView: {
     flex: 1,
@@ -628,39 +611,48 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 40,
   },
-  header: {
+  topBar: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 24,
+    paddingBottom: 12,
+  },
+  mainCard: {
+    backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : colors.backgroundWhite, // Use solid white in light mode
+    borderRadius: 16,
+    marginHorizontal: 20,
+    marginBottom: 20,
+    overflow: 'hidden',
+    // Glass-like border (only in dark mode)
+    borderWidth: isDark ? 1 : 0,
+    borderColor: isDark ? ((colors as any).glassBorder || colors.border) : 'transparent', // No border in light mode
+    // Soft shadow with orange glow in dark mode (subtle glow)
+    shadowColor: (colors as any).glassShadowGlow || '#000',
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: isDark ? ((colors as any).glassShadowGlow ? 0.04 : 0.12) : 0.12, // Subtle glow matching TimeRangeSelector
+    shadowRadius: 8, // Reduced for subtle glow
+    elevation: 4, // Reduced for subtle glow
+  },
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
     position: 'relative',
-  },
-  backButton: {
-    paddingVertical: 8,
-    paddingLeft: 0,
-    paddingRight: 4,
-    alignSelf: 'flex-start',
-    marginBottom: 8,
-    marginLeft: -4, // Compensate for header padding to align with content
-    justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 32,
-    minHeight: 32,
-  },
-  backButtonText: {
-    fontSize: 24,
-    color: Colors.orange,
-    fontWeight: '600',
   },
   tickerText: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
     marginBottom: 4,
   },
   assetName: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: Colors.textSecondary,
+    fontFamily: 'Inter-Bold',
+    color: colors.textSecondary,
     marginBottom: 12,
     textAlign: 'left',
   },
@@ -676,7 +668,8 @@ const styles = StyleSheet.create({
   currencySymbol: {
     fontSize: 42,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
     marginRight: 4,
   },
   priceValueContainer: {
@@ -691,16 +684,19 @@ const styles = StyleSheet.create({
   priceValue: {
     fontSize: 42,
     fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
     letterSpacing: -1,
   },
   priceDecimalDot: {
     fontSize: 42,
     fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
     letterSpacing: -1,
   },
   priceDecimal: {
     fontSize: 42,
     fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
     letterSpacing: -1,
     minWidth: 20, // Ensure consistent width for single digits
   },
@@ -720,13 +716,14 @@ const styles = StyleSheet.create({
   },
   priceChangeText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
   },
   priceChangePositive: {
-    color: Colors.orange,
+    color: colors.green,
   },
   priceChangeNegative: {
-    color: Colors.textSecondary,
+    color: colors.red, // Use red for negative changes
   },
   priceChangePercentPill: {
     marginLeft: 8,
@@ -743,26 +740,13 @@ const styles = StyleSheet.create({
   priceChangePercentPillText: {
     fontSize: 12,
     fontWeight: '600',
+    fontFamily: 'Inter-SemiBold',
   },
   priceChangePercentPillTextPositive: {
-    color: Colors.orange,
+    color: colors.green,
   },
   priceChangePercentPillTextNegative: {
-    color: Colors.textSecondary,
-  },
-  chartContainer: {
-    marginBottom: 12,
-    minHeight: 250,
-    overflow: 'hidden',
-  },
-  noDataContainer: {
-    height: 250,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  noDataText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
   },
   tradingHoursContainer: {
     flexDirection: 'row',
@@ -775,11 +759,12 @@ const styles = StyleSheet.create({
   tradingHoursLabel: {
     fontSize: 14,
     fontWeight: '500',
-    color: Colors.textSecondary,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
   },
   tradingHoursToggle: {
     flexDirection: 'row',
-    backgroundColor: Colors.backgroundGrey,
+    backgroundColor: colors.backgroundGrey,
     borderRadius: 16,
     padding: 4,
     gap: 4,
@@ -790,78 +775,66 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   tradingHoursButtonActive: {
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   tradingHoursButtonText: {
     fontSize: 13,
     fontWeight: '500',
-    color: Colors.textSecondary,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
   },
   tradingHoursButtonTextActive: {
-    color: Colors.textPrimary,
+    fontFamily: 'Inter-SemiBold',
+    color: colors.textPrimary,
     fontWeight: '600',
   },
-  timeRangeContainer: {
+  rthEthContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  timeRangeButtons: {
-    flexDirection: 'row',
-    justifyContent: 'center',
     gap: 8,
   },
-  timeRangeButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: Colors.backgroundGrey,
-  },
-  timeRangeButtonActive: {
-    backgroundColor: Colors.textPrimary,
-  },
-  timeRangeButtonText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    fontWeight: '500',
-  },
-  timeRangeButtonTextActive: {
-    color: Colors.backgroundWhite,
-    fontWeight: '600',
-  },
   rthEthToggle: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: Colors.backgroundGrey,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    // No background by default (inactive state)
+  },
+  rthEthToggleActive: {
+    backgroundColor: colors.textPrimary, // Black pill
   },
   rthEthButtonText: {
     fontSize: 14,
     fontWeight: '500',
-    color: Colors.textPrimary,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary, // Lighter grey for inactive
+  },
+  rthEthButtonTextActive: {
+    fontFamily: 'Inter-Medium',
+    color: colors.backgroundWhite, // White text when active
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: Colors.textSecondary,
+    fontFamily: 'Inter',
+    color: colors.textSecondary,
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
     paddingHorizontal: 20,
   },
   errorText: {
     fontSize: 16,
-    color: Colors.red,
+    fontFamily: 'Inter',
+    color: colors.red,
     textAlign: 'center',
     marginBottom: 20,
   },
@@ -869,12 +842,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 8,
-    backgroundColor: Colors.orange,
+    backgroundColor: colors.orange,
   },
   retryButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: Colors.backgroundWhite,
+    fontFamily: 'Inter-SemiBold',
+    color: colors.backgroundWhite,
   },
 });
 

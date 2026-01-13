@@ -11,11 +11,13 @@ import {
 } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { useAuth } from '../context/AuthContext';
-import { Colors } from '../constants/colors';
+import { useTheme } from '../context/ThemeContext';
+import { getColors } from '../constants/colors';
 import Constants from 'expo-constants';
 
 export default function LoginScreen() {
   const { loginWithToken, demoLogin } = useAuth();
+  const { isDark } = useTheme();
   const [loading, setLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
   const apiBaseUrl = __DEV__
@@ -36,6 +38,8 @@ export default function LoginScreen() {
       setDemoLoading(false);
     }
   };
+
+  const styles = createStyles(getColors(isDark));
 
   const handleAlpacaLogin = async () => {
     try {
@@ -69,7 +73,7 @@ export default function LoginScreen() {
         // Android options
         enableBarCollapsing: false,
         // Toolbar color (optional)
-        toolbarColor: Colors.backgroundWhite,
+        toolbarColor: getColors(isDark).backgroundWhite,
         // Controls whether to show title bar
         showTitle: true,
       });
@@ -153,7 +157,7 @@ export default function LoginScreen() {
             disabled={loading || demoLoading}
           >
             {demoLoading ? (
-              <ActivityIndicator color={Colors.backgroundWhite} />
+              <ActivityIndicator color={getColors(isDark).backgroundWhite} />
             ) : (
               <Text style={styles.buttonText}>Demo Login</Text>
             )}
@@ -165,7 +169,7 @@ export default function LoginScreen() {
             disabled={loading || demoLoading}
           >
             {loading ? (
-              <ActivityIndicator color={Colors.orange} />
+              <ActivityIndicator color={getColors(isDark).orange} />
             ) : (
               <Text style={[styles.buttonText, styles.buttonTextSecondary]}>Login with Alpaca</Text>
             )}
@@ -183,10 +187,10 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
     justifyContent: 'center',
     paddingHorizontal: 20,
   },
@@ -198,13 +202,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
     textAlign: 'center',
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: 32,
   },
@@ -212,15 +216,15 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   input: {
-    backgroundColor: Colors.backgroundWhite,
+    backgroundColor: colors.backgroundWhite,
     borderRadius: 8,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 16,
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: Colors.backgroundGrey,
+    borderColor: colors.backgroundGrey,
   },
   button: {
     borderRadius: 8,
@@ -229,26 +233,26 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   buttonPrimary: {
-    backgroundColor: Colors.orange,
+    backgroundColor: colors.orange,
   },
   buttonSecondary: {
     backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: Colors.orange,
+    borderColor: colors.orange,
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   buttonText: {
-    color: Colors.backgroundWhite,
+    color: colors.backgroundWhite,
     fontSize: 16,
     fontWeight: '600',
   },
   buttonTextSecondary: {
-    color: Colors.orange,
+    color: colors.orange,
   },
   infoBox: {
-    backgroundColor: Colors.backgroundGrey,
+    backgroundColor: colors.backgroundGrey,
     borderRadius: 8,
     padding: 16,
     marginTop: 24,
@@ -256,12 +260,12 @@ const styles = StyleSheet.create({
   infoTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
     marginBottom: 8,
   },
   infoText: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 4,
   },
 });

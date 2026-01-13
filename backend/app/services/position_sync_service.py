@@ -253,9 +253,15 @@ class PositionSyncService:
                     created_count += 1
             
             # Remove positions that no longer exist in Alpaca
+            # BUT preserve positions that are in ALLOWED_TICKERS (manually managed positions)
             removed_count = 0
+            allowed_tickers_upper = {t.upper() for t in settings.ALLOWED_TICKERS}
             for ticker, position in existing_positions.items():
                 if ticker not in seen_tickers:
+                    # Don't remove positions that are in ALLOWED_TICKERS (manually managed)
+                    if ticker in allowed_tickers_upper:
+                        logger.info(f"Preserving manually managed position {ticker} for user {user.id} (not in Alpaca but in ALLOWED_TICKERS)")
+                        continue
                     logger.info(f"Removing position {ticker} for user {user.id} (no longer in Alpaca)")
                     db.delete(position)
                     removed_count += 1
@@ -290,17 +296,23 @@ class PositionSyncService:
             }
     
     async def _remove_all_positions(self, db: Session, user_id: int) -> Dict[str, int]:
-        """Remove all positions for a user (when they have none in Alpaca)"""
+        """Remove all positions for a user (when they have none in Alpaca), but preserve ALLOWED_TICKERS"""
         try:
             positions = db.query(Position).filter(Position.user_id == user_id).all()
-            removed_count = len(positions)
+            allowed_tickers_upper = {t.upper() for t in settings.ALLOWED_TICKERS}
+            removed_count = 0
             
             for position in positions:
+                # Don't remove positions that are in ALLOWED_TICKERS (manually managed)
+                if position.ticker.upper() in allowed_tickers_upper:
+                    logger.info(f"Preserving manually managed position {position.ticker} for user {user_id} (in ALLOWED_TICKERS)")
+                    continue
                 db.delete(position)
+                removed_count += 1
             
             db.commit()
             
-            logger.info(f"Removed {removed_count} positions for user {user_id} (no positions in Alpaca)")
+            logger.info(f"Removed {removed_count} positions for user {user_id} (no positions in Alpaca, but preserved ALLOWED_TICKERS)")
             
             return {
                 "user_id": user_id,

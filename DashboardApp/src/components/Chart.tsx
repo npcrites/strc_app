@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, Dimensions, PanResponder, Animated, Easing } fr
 import { LineChart } from 'react-native-gifted-charts';
 import Svg, { Defs, Pattern, Circle, Rect as SvgRect, LinearGradient, Stop, Mask, ClipPath, Path, Line, G } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
-import { Colors } from '../constants/colors';
+import { useTheme } from '../context/ThemeContext';
+import { getColors } from '../constants/colors';
 import { TradingHoursMode, isMarketHours } from '../utils/marketHours';
 
 // Create animated SVG components for path animations
@@ -1768,6 +1769,7 @@ const DragTooltip = React.memo(({
   value,
   timestamp,
   tradingHoursMode,
+  colors,
 }: {
   dragXAnimated: Animated.Value;
   dotYAnimated: Animated.Value;
@@ -1775,6 +1777,7 @@ const DragTooltip = React.memo(({
   value: number;
   timestamp: number;
   tradingHoursMode?: TradingHoursMode;
+  colors: ReturnType<typeof getColors>;
 }) => {
   const [tooltipY, setTooltipY] = useState(0);
   const [tooltipX, setTooltipX] = useState(0);
@@ -1806,7 +1809,7 @@ const DragTooltip = React.memo(({
       }}
     >
       <View style={{
-        backgroundColor: Colors.backgroundGrey,
+        backgroundColor: colors.backgroundGrey,
         borderRadius: 8,
         paddingHorizontal: 12,
         paddingVertical: 8,
@@ -1821,7 +1824,7 @@ const DragTooltip = React.memo(({
         <Text style={{
           fontSize: 16,
           fontWeight: '600',
-          color: Colors.textPrimary,
+          color: colors.textPrimary,
           marginBottom: 4,
         }}>
           {new Intl.NumberFormat('en-US', {
@@ -1833,7 +1836,7 @@ const DragTooltip = React.memo(({
         </Text>
         <Text style={{
           fontSize: 12,
-          color: Colors.textSecondary,
+          color: colors.textSecondary,
         }}>
           {(() => {
             // Use JavaScript's built-in timezone conversion
@@ -1906,12 +1909,14 @@ const FadeOverlay = React.memo(({
   dragXAnimated,
   fadeMode,
   fadeIntensity,
+  colors,
 }: {
   width: number;
   height: number;
   dragXAnimated: Animated.Value;
   fadeMode: 'none' | 'future' | 'past';
   fadeIntensity: number;
+  colors: ReturnType<typeof getColors>;
 }) => {
   const [gradientStopPercent, setGradientStopPercent] = useState<number>(0);
   const listenerRef = useRef<string | null>(null);
@@ -1987,7 +1992,7 @@ const FadeOverlay = React.memo(({
       <SvgRect
         width={width}
         height={height}
-        fill={Colors.background}
+        fill={colors.background}
         fillOpacity={1 - fadeIntensity} // Overlay opacity: 0.5 means 50% fade when fadeIntensity=0.5
         mask="url(#fadeMask)"
       />
@@ -2010,6 +2015,7 @@ const ChartOverlay = React.memo(({
   getInterpolatedPaths,
   gradientOpacity,
   dotsOpacity,
+  colors,
 }: { 
   width: number; 
   height: number; 
@@ -2022,17 +2028,18 @@ const ChartOverlay = React.memo(({
   getInterpolatedPaths?: () => { linePath: string; areaPath: string };
   gradientOpacity?: Animated.AnimatedInterpolation<number>;
   dotsOpacity?: Animated.AnimatedInterpolation<number>;
+  colors: ReturnType<typeof getColors>;
 }) => {
   if (chartData.length === 0) return null;
   
   const {
-    lineColor = Colors.chartOrange,
+    lineColor = colors.chartOrange,
     lineThickness = 3,
-    gradientStartColor = Colors.chartOrange + '4D',
-    gradientEndColor = Colors.background + '00',
+    gradientStartColor = colors.chartOrange + '4D',
+    gradientEndColor = colors.background + '00',
     gradientStartOpacity = 0.3,
     gradientEndOpacity = 0,
-    patternColor = Colors.chartOrange,
+    patternColor = colors.chartOrange,
     patternOpacity = 0.15,
     patternSize = 8, // Smaller spacing for more dots
     curved = true,
@@ -2210,6 +2217,53 @@ const ChartOverlay = React.memo(({
   return true; // Props are equal, skip re-render
 });
 
+// Define createStyles before Chart function so it's available
+const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create({
+  container: {
+    width: '100%',
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    position: 'relative',
+    overflow: 'visible', // Allow chart to extend beyond container
+  },
+  chartWrapper: {
+    width: screenWidth, // Use screen width
+    height: '100%',
+    position: 'relative',
+    overflow: 'visible', // Allow chart to extend
+  },
+  chartContainer: {
+    width: screenWidth, // Use screen width
+    height: '100%',
+    position: 'relative',
+    overflow: 'visible', // Allow chart to extend
+    paddingHorizontal: 0, // No padding - extend to edges
+  },
+  chartOverlayContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    pointerEvents: 'none',
+    zIndex: 1, // Behind the chart line
+  },
+  emptyText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  verticalLineContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    width: '100%',
+    pointerEvents: 'none',
+    zIndex: 10,
+  },
+});
+
 function Chart({ 
   data, 
   height = 200, 
@@ -2222,15 +2276,17 @@ function Chart({
   config = {},
   testID
 }: ChartProps) {
+  const { isDark } = useTheme();
+  
   // Merge default config with provided config
   const defaultConfig: ChartConfig = {
-    lineColor: Colors.chartOrange,
+    lineColor: getColors(isDark).chartOrange,
     lineThickness: 3,
-    gradientStartColor: Colors.chartOrange + '4D',
-    gradientEndColor: Colors.background + '00',
+    gradientStartColor: getColors(isDark).chartOrange + '4D',
+    gradientEndColor: getColors(isDark).background + '00',
     gradientStartOpacity: 0.3,
     gradientEndOpacity: 0,
-    patternColor: Colors.chartOrange,
+    patternColor: getColors(isDark).chartOrange,
     patternOpacity: 0.15,
     patternSize: 8,
     curved: true,
@@ -2242,6 +2298,7 @@ function Chart({
   };
   
   const finalConfig = { ...defaultConfig, ...config };
+  const styles = createStyles(getColors(isDark));
   
   // ============================================================================
   // Use extracted hooks for data processing and drag interaction
@@ -2350,6 +2407,7 @@ function Chart({
             getInterpolatedPaths={getInterpolatedPaths}
             gradientOpacity={gradientOpacity}
             dotsOpacity={dotsOpacity}
+            colors={getColors(isDark)}
           />
         </View>
         
@@ -2389,6 +2447,7 @@ function Chart({
             dragXAnimated={dragXAnimated}
             fadeMode={finalConfig.fadeMode || 'future'}
             fadeIntensity={finalConfig.fadeIntensity ?? 0.5}
+            colors={getColors(isDark)}
           />
         )}
       </View>
@@ -2414,7 +2473,7 @@ function Chart({
               {/* Dotted vertical line - path is static, moved via transform */}
               <Path
                 d={verticalLinePath}
-                fill={Colors.assetGreyLight}
+                fill={getColors(isDark).assetGreyLight}
               />
             </Svg>
           </Animated.View>
@@ -2438,7 +2497,7 @@ function Chart({
               }
             ]}
           >
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.chartOrange }} />
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: getColors(isDark).chartOrange }} />
           </Animated.View>
           
           {/* Tooltip showing price and timestamp */}
@@ -2450,6 +2509,7 @@ function Chart({
               value={currentDragData.value}
               timestamp={currentDragData.timestamp}
               tradingHoursMode={tradingHoursMode}
+              colors={getColors(isDark)}
             />
           )}
         </>
@@ -2483,51 +2543,4 @@ export default React.memo(Chart, (prevProps, nextProps) => {
   }
   
   return true; // Props are equal, skip re-render
-});
-
-const styles = StyleSheet.create({
-  container: {
-    width: '100%',
-    alignItems: 'stretch',
-    justifyContent: 'center',
-    position: 'relative',
-    overflow: 'visible', // Allow chart to extend beyond container
-  },
-  chartWrapper: {
-    width: screenWidth, // Use screen width
-    height: '100%',
-    position: 'relative',
-    overflow: 'visible', // Allow chart to extend
-  },
-  chartContainer: {
-    width: screenWidth, // Use screen width
-    height: '100%',
-    position: 'relative',
-    overflow: 'visible', // Allow chart to extend
-    paddingHorizontal: 0, // No padding - extend to edges
-  },
-  chartOverlayContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    pointerEvents: 'none',
-    zIndex: 1, // Behind the chart line
-  },
-  emptyText: {
-    fontSize: 14,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
-  verticalLineContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    width: '100%',
-    pointerEvents: 'none',
-    zIndex: 10,
-  },
-  // verticalLine style removed - now using SVG Line component with dotted pattern and gradient fade
 });

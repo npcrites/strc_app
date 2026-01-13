@@ -8,15 +8,19 @@ import {
   TouchableOpacity,
   StatusBar,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { dashboardApi } from '../services/dashboard';
 import { DashboardSnapshot, ActivityItem, ActivityType } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
-import { Colors } from '../constants/colors';
+import { getColors } from '../constants/colors';
 
 export default function ActivityScreen() {
   const { token, loading: authLoading, logout } = useAuth();
+  const { isDark } = useTheme();
+  const Colors = getColors(isDark);
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<DashboardSnapshot | null>(null);
@@ -103,13 +107,13 @@ export default function ActivityScreen() {
     switch (type) {
       case ActivityType.DIVIDEND:
       case ActivityType.UPCOMING_DIVIDEND:
-        return Colors.orange;
+        return getColors(isDark).orange;
       case ActivityType.BUY:
-        return Colors.green;
+        return getColors(isDark).green;
       case ActivityType.SELL:
-        return Colors.red;
+        return getColors(isDark).red;
       default:
-        return Colors.textSecondary;
+        return getColors(isDark).textSecondary;
     }
   };
 
@@ -134,11 +138,13 @@ export default function ActivityScreen() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
+  const styles = createStyles(Colors);
+
   // Show loading spinner while auth is loading or activity is loading (initial load only)
   if (authLoading || (loading && !data)) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.orange} />
+        <ActivityIndicator size="large" color={getColors(isDark).orange} />
         <Text style={styles.loadingText}>Loading activity...</Text>
       </View>
     );
@@ -160,7 +166,7 @@ export default function ActivityScreen() {
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.backgroundWhite} />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={getColors(isDark).backgroundWhite} />
       <ScrollView 
         style={styles.container} 
         showsVerticalScrollIndicator={false}
@@ -185,9 +191,16 @@ export default function ActivityScreen() {
                 <View
                   style={[
                     styles.upcomingIcon,
-                    { backgroundColor: Colors.cardYellow },
+                    { backgroundColor: getColors(isDark).cardYellow },
                   ]}
                 >
+                  <LinearGradient
+                    colors={['rgba(255, 255, 255, 0.6)', 'rgba(255, 255, 255, 0.1)', 'transparent']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFillObject}
+                  />
+                  <View style={styles.iconGlow} />
                   <Text style={styles.upcomingIconText}>⏰</Text>
                 </View>
                 <View style={styles.upcomingCardContent}>
@@ -227,21 +240,34 @@ export default function ActivityScreen() {
         {recentActivities.length === 0 ? (
           <Text style={styles.emptyText}>No recent activity</Text>
         ) : (
-          recentActivities.map((item, index) => (
+          recentActivities.map((item, index) => {
+            const iconColor = getActivityIconColor(item.activity_type as ActivityType);
+            return (
             <View key={index} style={styles.recentItem}>
               <View
                 style={[
                   styles.recentIcon,
-                  { backgroundColor: getActivityIconColor(item.activity_type) + '20' },
+                  { backgroundColor: iconColor + '20' },
                 ]}
               >
+                <LinearGradient
+                  colors={[
+                    'rgba(255, 255, 255, 0.5)',
+                    'rgba(255, 255, 255, 0.1)',
+                    'transparent'
+                  ]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFillObject}
+                />
+                <View style={[styles.iconGlow, { backgroundColor: iconColor + '30' }]} />
                 <Text
                   style={[
                     styles.recentIconText,
-                    { color: getActivityIconColor(item.activity_type) },
+                    { color: iconColor },
                   ]}
                 >
-                  {getActivityIcon(item.activity_type)}
+                  {getActivityIcon(item.activity_type as ActivityType)}
                 </Text>
               </View>
               <View style={styles.recentContent}>
@@ -267,7 +293,8 @@ export default function ActivityScreen() {
                 </Text>
               </View>
             </View>
-          ))
+          );
+          })
         )}
       </View>
       </ScrollView>
@@ -275,38 +302,38 @@ export default function ActivityScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
     paddingHorizontal: 20,
   },
   retryButton: {
     marginTop: 16,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: Colors.orange,
+    backgroundColor: colors.orange,
     borderRadius: 8,
   },
   retryButtonText: {
-    color: Colors.backgroundWhite,
+    color: colors.backgroundWhite,
     fontWeight: '600',
   },
   header: {
@@ -321,18 +348,18 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
   },
   logoutButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
-    backgroundColor: Colors.backgroundGrey,
+    backgroundColor: colors.backgroundGrey,
   },
   logoutButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
   },
   section: {
     paddingHorizontal: 20,
@@ -341,7 +368,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 12,
     textTransform: 'uppercase',
   },
@@ -349,9 +376,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: Colors.cardYellow,
+    backgroundColor: colors.cardYellow,
     borderWidth: 1,
-    borderColor: Colors.cardYellowBorder,
+    borderColor: colors.cardYellowBorder,
     borderStyle: 'dashed',
     borderRadius: 12,
     padding: 16,
@@ -369,10 +396,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+    overflow: 'hidden',
+    // iOS shadows
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    // Android shadow
+    elevation: 4,
+  },
+  iconGlow: {
+    position: 'absolute',
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    top: -5,
+    left: -5,
+    width: '60%',
+    height: '60%',
   },
   upcomingIconText: {
     fontSize: 20,
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
   },
   upcomingCardContent: {
     flex: 1,
@@ -385,23 +429,23 @@ const styles = StyleSheet.create({
   upcomingTicker: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
     marginRight: 8,
   },
   exDateTag: {
-    backgroundColor: Colors.cardYellowBorder,
+    backgroundColor: colors.cardYellowBorder,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
   },
   exDateTagText: {
     fontSize: 12,
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
     fontWeight: '500',
   },
   upcomingDescription: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
   },
   upcomingCardRight: {
     alignItems: 'flex-end',
@@ -409,19 +453,19 @@ const styles = StyleSheet.create({
   upcomingAmount: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
     marginBottom: 4,
   },
   upcomingDate: {
     fontSize: 12,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
   },
   recentItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.backgroundGrey,
+    borderBottomColor: colors.backgroundGrey,
   },
   recentIcon: {
     width: 40,
@@ -430,6 +474,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+    overflow: 'hidden',
+    // iOS shadows
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    // Android shadow
+    elevation: 4,
   },
   recentIconText: {
     fontSize: 18,
@@ -441,12 +493,12 @@ const styles = StyleSheet.create({
   recentTicker: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
     marginBottom: 2,
   },
   recentDescription: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
   },
   recentRight: {
     alignItems: 'flex-end',
@@ -454,28 +506,28 @@ const styles = StyleSheet.create({
   recentAmount: {
     fontSize: 16,
     fontWeight: '600',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
     marginBottom: 4,
   },
   recentAmountPositive: {
     fontSize: 16,
     fontWeight: '600',
-    color: Colors.green,
+    color: colors.green,
     marginBottom: 4,
   },
   recentDate: {
     fontSize: 12,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
   },
   errorText: {
     fontSize: 16,
-    color: Colors.red,
+    color: colors.red,
     textAlign: 'center',
     marginTop: 20,
   },
   emptyText: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     paddingVertical: 20,
   },

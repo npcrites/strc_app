@@ -38,43 +38,65 @@ const lightColors = {
   assetGrey: '#666666',
   assetGreyLight: '#CCCCCC',
   assetGreen: '#4CAF50',
+  
+  // Border & Input colors (light mode - not used but for consistency)
+  border: '#E0E0E0',
+  input: '#E0E0E0',
+  ring: '#f7931a',
+  
+  // Glass/Glassmorphism effects (light mode)
+  glassBackground: 'rgba(255, 255, 255, 0.7)',
+  glassBorder: 'rgba(255, 255, 255, 0.3)',
+  glassShadowGlow: undefined, // No glow in light mode
 };
 
 const darkColors = {
-  // Primary colors (same in dark mode)
-  orange: '#f7931a',
+  // Primary colors - warm orange accent
+  orange: '#FF7A2E', // hsl(25, 95%, 53%) - Vibrant orange for charts/CTAs
   orangeLight: '#FFE5DD',
-  green: '#4CAF50',
+  green: '#2DD4BF', // hsl(152, 60%, 50%) - Teal green for success/positive
   greenLight: '#E8F5E9',
   greenDark: '#2E8B57',
-  red: '#F44336',
+  red: '#D32F2F', // hsl(0, 62%, 45%) - Muted red for errors/destructive
   redLight: '#FFEBEE',
-  redDark: '#D20A2E',
+  redDark: '#B71C1C',
   
-  // Text colors (inverted for dark mode)
-  textPrimary: '#FFFFFF',
-  textSecondary: '#CCCCCC',
-  textTertiary: '#999999',
+  // Text colors - warm off-white
+  textPrimary: '#F2EDE8', // hsl(30, 10%, 95%) - Warm off-white
+  textSecondary: '#8B7D6B', // hsl(25, 8%, 55%) - Warm gray for secondary text
+  textTertiary: '#6B5F52',
   
-  // Background colors (dark variants)
-  background: '#121212',
-  backgroundWhite: '#1E1E1E',
-  backgroundGrey: '#2A2A2A',
+  // Background colors - warm dark grays
+  background: '#141210', // hsl(20, 10%, 7%) - Very dark warm gray, almost black
+  backgroundWhite: '#1C1A18', // hsl(20, 8%, 11%) - Card/Popover
+  backgroundGrey: '#292622', // hsl(20, 8%, 16%) - Elevated surface color
+  backgroundAccent: '#2E2B26', // hsl(20, 8%, 18%) - Interactive element backgrounds
+  backgroundMuted: '#38352F', // hsl(20, 6%, 22%) - Subdued backgrounds
   
   // Card colors (dark variants)
   cardYellow: '#2A2418',
   cardYellowBorder: '#4A3D2A',
   
-  // Chart colors (same)
-  chartOrange: '#f7931a',
+  // Chart colors - warm orange
+  chartOrange: '#FF7A2E', // hsl(25, 95%, 53%) - Vibrant orange
   chartOrangeGradient: '#FFE5DD',
   
-  // Asset colors (same)
-  assetBlack: '#FFFFFF',
-  assetOrange: '#f7931a',
-  assetGrey: '#999999',
-  assetGreyLight: '#666666',
-  assetGreen: '#4CAF50',
+  // Asset colors
+  assetBlack: '#F2EDE8',
+  assetOrange: '#FF7A2E',
+  assetGrey: '#8B7D6B',
+  assetGreyLight: '#6B5F52',
+  assetGreen: '#2DD4BF',
+  
+  // Border & Input colors
+  border: '#332F2A', // hsl(20, 6%, 20%) - Subtle warm gray borders
+  input: '#332F2A', // hsl(20, 6%, 20%) - Form input borders
+  ring: '#D4B8A3', // hsl(25, 15%, 75%) - Focus ring color
+  
+  // Glass/Glassmorphism effects
+  glassBackground: '#1C1A18', // hsl(20, 8%, 11%) - Card/Popover solid color
+  glassBorder: 'rgba(70, 64, 56, 0.5)', // hsla(25, 6%, 28%, 0.5) - Subtle warm border
+  glassShadowGlow: '#CC6A1F', // hsl(25, 80%, 40%) - Orange glow
 };
 
 // Default export for light theme (backward compatibility)

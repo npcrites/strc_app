@@ -12,16 +12,18 @@ import {
   Animated,
   Modal,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AnimatedNumbers from 'react-native-animated-numbers';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { dashboardApi } from '../services/dashboard';
 import { DashboardSnapshot, Position } from '../types';
 import { api } from '../services/api';
 import { formatCurrency, formatPercentage, formatDateShort } from '../utils/formatters';
-import { Colors } from '../constants/colors';
+import { getColors } from '../constants/colors';
 import Chart from '../components/Chart';
 import { refreshRateLimiter } from '../utils/rateLimiter';
 import { filterDashboardByTimeRange } from '../utils/dashboardFilter';
@@ -66,9 +68,14 @@ const formatPortfolioValue = (value: number): number => {
 
 export default function HomeScreen() {
   const { token, loading: authLoading, user, logout } = useAuth();
+  const { isDark } = useTheme();
   const navigation = useNavigation<HomeScreenNavigationProp>();
   const insets = useSafeAreaInsets();
   const screenWidth = Dimensions.get('window').width;
+  
+  // Initialize styles early so they're available for early returns
+  const styles = useMemo(() => createStyles(getColors(isDark)), [isDark]);
+  
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<DashboardSnapshot | null>(null);
@@ -93,7 +100,7 @@ export default function HomeScreen() {
   const valueDirectionRef = useRef<'increasing' | 'decreasing' | null>(null);
   const colorOpacityAnim = useRef(new Animated.Value(0)).current;
   const fadeOutTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const [portfolioValueColor, setPortfolioValueColor] = useState<string>(Colors.textPrimary);
+  const [portfolioValueColor, setPortfolioValueColor] = useState<string>(getColors(isDark).textPrimary);
   const MIN_REFRESH_INTERVAL_MS = 30 * 1000; // Minimum 30 seconds between any refreshes
 
   // Calculate responsive scale factor (base: 375px iPhone standard)
@@ -190,10 +197,10 @@ export default function HomeScreen() {
     if (previousValue !== null && currentValue !== previousValue && portfolioLeftmostChangePosition !== -1) {
       if (portfolioIsIncrease) {
         valueDirectionRef.current = 'increasing';
-        setPortfolioValueColor(Colors.greenDark);
+        setPortfolioValueColor(getColors(isDark).greenDark);
       } else {
         valueDirectionRef.current = 'decreasing';
-        setPortfolioValueColor(Colors.redDark);
+        setPortfolioValueColor(getColors(isDark).redDark);
       }
       
       previousPortfolioValueRef.current = currentValue;
@@ -215,7 +222,7 @@ export default function HomeScreen() {
         }).start(() => {
           // Reset direction and color after fade completes
           valueDirectionRef.current = null;
-          setPortfolioValueColor(Colors.textPrimary);
+          setPortfolioValueColor(getColors(isDark).textPrimary);
         });
       }, 1000); // 800ms animation + 200ms delay
     } else if (previousValue === null) {
@@ -424,11 +431,11 @@ export default function HomeScreen() {
   // Get asset color based on index
   const getAssetColor = (index: number) => {
     const colors = [
-      Colors.assetBlack,
-      Colors.assetOrange,
-      Colors.assetGrey,
-      Colors.assetGreyLight,
-      Colors.assetGreen,
+      getColors(isDark).assetBlack,
+      getColors(isDark).assetOrange,
+      getColors(isDark).assetGrey,
+      getColors(isDark).assetGreyLight,
+      getColors(isDark).assetGreen,
     ];
     return colors[index % colors.length];
   };
@@ -525,7 +532,7 @@ export default function HomeScreen() {
   if (authLoading || (loading && !data && !refreshing)) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={Colors.orange} />
+        <ActivityIndicator size="large" color={getColors(isDark).orange} />
         <Text style={styles.loadingText}>Loading dashboard...</Text>
       </View>
     );
@@ -634,7 +641,7 @@ export default function HomeScreen() {
 
   return (
     <>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.backgroundWhite} />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={getColors(isDark).backgroundWhite} />
       <ScrollView 
         style={styles.container} 
         showsVerticalScrollIndicator={false}
@@ -876,9 +883,9 @@ export default function HomeScreen() {
             onDragStart={() => setScrollEnabled(false)}
             onDragEnd={() => setScrollEnabled(true)}
             config={{
-              lineColor: Colors.chartOrange,
-              gradientStartColor: Colors.chartOrange,
-              gradientEndColor: Colors.chartOrange,
+              lineColor: getColors(isDark).chartOrange,
+              gradientStartColor: getColors(isDark).chartOrange,
+              gradientEndColor: getColors(isDark).chartOrange,
               gradientStartOpacity: 0.3,
               gradientEndOpacity: 0,
               curved: timeRange !== '1W', // Straight lines for 1W (spiky), curves for longer timeframes
@@ -918,18 +925,33 @@ export default function HomeScreen() {
         
         {/* Allocation Bar */}
         <View style={styles.allocationBar}>
-          {data.allocation.map((item, index) => (
-            <View
-              key={item.ticker}
-              style={[
-                styles.allocationSegment,
-                {
-                  flex: item.percent / 100,
-                  backgroundColor: getAssetColor(index),
-                },
-              ]}
-            />
-          ))}
+          {data.allocation.map((item, index) => {
+            const segmentColor = getAssetColor(index);
+            return (
+              <View
+                key={item.ticker}
+                style={[
+                  styles.allocationSegment,
+                  {
+                    flex: item.percent / 100,
+                    backgroundColor: segmentColor,
+                  },
+                ]}
+              >
+                <LinearGradient
+                  colors={[
+                    'rgba(255, 255, 255, 0.4)',
+                    'rgba(255, 255, 255, 0.1)',
+                    'transparent'
+                  ]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 0, y: 1 }}
+                  style={StyleSheet.absoluteFillObject}
+                />
+                <View style={[styles.segmentGlow, { backgroundColor: segmentColor + '40' }]} />
+              </View>
+            );
+          })}
         </View>
 
         {/* Asset List */}
@@ -947,7 +969,19 @@ export default function HomeScreen() {
                     styles.assetIcon,
                     { backgroundColor: getAssetColor(index) },
                   ]}
-                />
+                >
+                  <LinearGradient
+                    colors={[
+                      'rgba(255, 255, 255, 0.5)',
+                      'rgba(255, 255, 255, 0.1)',
+                      'transparent'
+                    ]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFillObject}
+                  />
+                  <View style={[styles.assetIconGlow, { backgroundColor: getAssetColor(index) + '30' }]} />
+                </View>
                 <View style={styles.assetItemText}>
                   <Text style={styles.assetTicker}>{item.ticker}</Text>
                   <Text style={styles.assetName}>{assetNames[item.ticker] || item.ticker}</Text>
@@ -993,10 +1027,10 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
     overflow: 'visible', // Allow chart to extend beyond ScrollView bounds
   },
   scrollContent: {
@@ -1014,14 +1048,14 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
   },
   profileIcon: {
     position: 'absolute',
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: Colors.textPrimary,
+    backgroundColor: colors.textPrimary,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
@@ -1029,11 +1063,11 @@ const styles = StyleSheet.create({
   profileIconText: {
     fontSize: 18,
     fontWeight: '600',
-    color: Colors.backgroundWhite,
+    color: colors.backgroundWhite,
   },
   modalContent: {
     flex: 1,
-    backgroundColor: Colors.backgroundWhite,
+    backgroundColor: colors.backgroundWhite,
   },
   modalContentInner: {
     flex: 1,
@@ -1051,7 +1085,7 @@ const styles = StyleSheet.create({
   modalCloseButtonText: {
     fontSize: 24,
     fontWeight: '300',
-    color: Colors.textPrimary,
+    color: colors.textPrimary,
   },
   logoutButtonModal: {
     paddingVertical: 16,
@@ -1062,24 +1096,25 @@ const styles = StyleSheet.create({
   logoutButtonModalText: {
     fontSize: 16,
     fontWeight: '600',
-    color: Colors.red,
+    color: colors.red,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: Colors.textSecondary,
+    fontFamily: 'Inter',
+    color: colors.textSecondary,
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.background,
     paddingHorizontal: 20,
   },
   portfolioSection: {
@@ -1089,7 +1124,8 @@ const styles = StyleSheet.create({
   },
   portfolioLabel: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    fontFamily: 'Inter',
+    color: colors.textSecondary,
     marginBottom: 12,
   },
   portfolioValueContainer: {
@@ -1102,7 +1138,8 @@ const styles = StyleSheet.create({
   currencySymbol: {
     fontSize: 36,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
     letterSpacing: -1,
     lineHeight: 36,
   },
@@ -1121,17 +1158,19 @@ const styles = StyleSheet.create({
   portfolioValue: {
     fontSize: 36,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
     letterSpacing: -1,
     lineHeight: 36,
   },
   portfolioValueDefault: {
-    color: Colors.textPrimary, // Explicitly set default color
+    color: colors.textPrimary, // Explicitly set default color
   },
   portfolioValueDecimal: {
     fontSize: 36,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
     letterSpacing: -1,
     lineHeight: 36,
   },
@@ -1151,14 +1190,15 @@ const styles = StyleSheet.create({
   },
   deltaText: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
     letterSpacing: -0.3,
   },
   deltaTextPositive: {
-    color: Colors.greenDark,
+    color: colors.green, // Use same green as asset detail screen
   },
   deltaTextNegative: {
-    color: Colors.redDark,
+    color: colors.red, // Use same red as asset detail screen
   },
   deltaPercentPill: {
     marginLeft: 8,
@@ -1167,18 +1207,20 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   deltaPercentPillPositive: {
-    backgroundColor: Colors.greenDark,
+    backgroundColor: colors.green, // Use same green as asset detail screen
   },
   deltaPercentPillNegative: {
-    backgroundColor: Colors.redDark,
+    backgroundColor: colors.red, // Use same red as asset detail screen
   },
   deltaPercentPillText: {
-    color: Colors.backgroundWhite,
+    color: colors.backgroundWhite,
     fontSize: 12,
     fontWeight: '600',
+    fontFamily: 'Inter-SemiBold',
   },
   timeRangeContainer: {
     flexDirection: 'row',
+    justifyContent: 'center',
     paddingHorizontal: 20,
     marginTop: 8,
     marginBottom: 24,
@@ -1188,18 +1230,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 16,
-    backgroundColor: Colors.backgroundGrey,
+    backgroundColor: colors.backgroundGrey,
   },
   timeRangeButtonActive: {
-    backgroundColor: Colors.backgroundGrey,
+    backgroundColor: colors.backgroundGrey,
   },
   timeRangeButtonText: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   timeRangeButtonTextActive: {
-    color: Colors.textPrimary,
+    fontFamily: 'Inter-SemiBold',
+    color: colors.textPrimary,
     fontWeight: '600',
   },
   chartWrapper: {
@@ -1223,18 +1267,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 16,
-    backgroundColor: Colors.backgroundGrey,
+    backgroundColor: colors.backgroundGrey,
   },
   filterButtonActive: {
-    backgroundColor: Colors.textPrimary,
+    backgroundColor: colors.textPrimary,
   },
   filterButtonText: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   filterButtonTextActive: {
-    color: Colors.backgroundWhite,
+    fontFamily: 'Inter-SemiBold',
+    color: colors.backgroundWhite,
     fontWeight: '600',
   },
   assetSection: {
@@ -1244,7 +1290,8 @@ const styles = StyleSheet.create({
   assetSectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    fontFamily: 'Inter-Bold',
+    color: colors.textPrimary,
     marginBottom: 12,
   },
   allocationBar: {
@@ -1253,9 +1300,26 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginBottom: 20,
     overflow: 'hidden',
+    // iOS shadows for depth
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    // Android shadow
+    elevation: 3,
   },
   allocationSegment: {
     height: '100%',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  segmentGlow: {
+    position: 'absolute',
+    top: -2,
+    left: 0,
+    right: 0,
+    height: '40%',
+    borderRadius: 4,
   },
   assetItem: {
     flexDirection: 'row',
@@ -1263,7 +1327,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.backgroundGrey,
+    borderBottomColor: colors.backgroundGrey,
   },
   assetItemLeft: {
     flexDirection: 'row',
@@ -1275,6 +1339,22 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     marginRight: 12,
+    overflow: 'hidden',
+    // iOS shadows for depth
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    // Android shadow
+    elevation: 3,
+  },
+  assetIconGlow: {
+    position: 'absolute',
+    top: -2,
+    left: -2,
+    width: '50%',
+    height: '50%',
+    borderRadius: 3,
   },
   assetItemText: {
     flex: 1,
@@ -1282,12 +1362,14 @@ const styles = StyleSheet.create({
   assetTicker: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
     marginBottom: 2,
   },
   assetName: {
     fontSize: 12,
-    color: Colors.textSecondary,
+    fontFamily: 'Inter',
+    color: colors.textSecondary,
   },
   assetItemRight: {
     alignItems: 'flex-end',
@@ -1295,16 +1377,19 @@ const styles = StyleSheet.create({
   assetValue: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: Colors.textPrimary,
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
     marginBottom: 2,
   },
   assetPercent: {
     fontSize: 12,
-    color: Colors.textSecondary,
+    fontFamily: 'Inter',
+    color: colors.textSecondary,
   },
   errorText: {
     fontSize: 16,
-    color: Colors.red,
+    fontFamily: 'Inter',
+    color: colors.red,
     textAlign: 'center',
     marginTop: 20,
   },
@@ -1312,12 +1397,13 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: Colors.orange,
+    backgroundColor: colors.orange,
     borderRadius: 8,
     alignSelf: 'center',
   },
   retryButtonText: {
-    color: Colors.backgroundWhite,
+    fontFamily: 'Inter-SemiBold',
+    color: colors.backgroundWhite,
     fontWeight: '600',
   },
 });
