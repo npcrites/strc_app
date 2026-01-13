@@ -7,16 +7,20 @@ import {
   TouchableOpacity,
   PanResponder,
   Animated,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
+import { BlurView } from 'expo-blur';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../constants/colors';
+import HomeIcon from './icons/HomeIcon';
 
 interface Tab {
   name: string;
   label: string;
-  icon: string;
+  iconName: keyof typeof Ionicons.glyphMap;
 }
 
 interface CustomTabBarProps {
@@ -26,8 +30,8 @@ interface CustomTabBarProps {
 }
 
 const tabs: Tab[] = [
-  { name: 'Home', label: 'Home', icon: '🏠' },
-  { name: 'Activity', label: 'Activity', icon: '📊' },
+  { name: 'Home', label: 'Home', iconName: 'home' },
+  { name: 'Activity', label: 'Activity', iconName: 'stats-chart' },
 ];
 
 const TAB_BAR_POSITION_KEY = '@tab_bar_position';
@@ -526,21 +530,19 @@ export default function CustomTabBar({
     }
   }, [isLayoutMeasured, containerWidth, positionIndex, screenWidth, translateX]);
 
-  return (
-    <Animated.View
-      style={[
-        styles.container,
-        {
-          bottom: Math.max(insets.bottom, 12) + 16,
-          left: 0,
-        },
-        {
-          transform: [{ translateX }],
-        },
-      ]}
-      onLayout={handleLayout}
-      {...panResponder.panHandlers}
-    >
+  const containerStyle = [
+    styles.container,
+    {
+      bottom: Math.max(insets.bottom, 12) + 16,
+      left: 0,
+    },
+    {
+      transform: [{ translateX }],
+    },
+  ];
+
+  const content = (
+    <>
       <View style={styles.dragHandle} pointerEvents="box-none" />
       <View style={styles.tabBar} pointerEvents="box-none">
         {/* Sliding grey pill background */}
@@ -598,16 +600,26 @@ export default function CustomTabBar({
                   },
                 ]}
               >
-                <Text
-                  style={[
-                    styles.tabIcon,
-                    isFocused
-                      ? styles.tabIconActive
-                      : styles.tabIconInactive,
-                  ]}
-                >
-                  {tab?.icon || '•'}
-                </Text>
+                {tab?.name === 'Home' ? (
+                  <HomeIcon
+                    size={20}
+                    color={
+                      isFocused
+                        ? Colors.orange
+                        : Colors.textPrimary
+                    }
+                  />
+                ) : (
+                  <Ionicons
+                    name={tab?.iconName || 'ellipse'}
+                    size={20}
+                    color={
+                      isFocused
+                        ? Colors.orange
+                        : Colors.textPrimary
+                    }
+                  />
+                )}
                 <Text
                   style={[
                     styles.tabLabel,
@@ -623,6 +635,29 @@ export default function CustomTabBar({
           );
         })}
       </View>
+    </>
+  );
+
+  return (
+    <Animated.View
+      style={containerStyle}
+      onLayout={handleLayout}
+      {...panResponder.panHandlers}
+    >
+      {Platform.OS === 'ios' ? (
+        <>
+          <BlurView
+            intensity={80}
+            tint="light"
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={{ zIndex: 1 }}>
+            {content}
+          </View>
+        </>
+      ) : (
+        content
+      )}
     </Animated.View>
   );
 }
@@ -630,7 +665,7 @@ export default function CustomTabBar({
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    backgroundColor: Colors.backgroundWhite,
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : Colors.backgroundWhite,
     borderRadius: 24,
     paddingHorizontal: 8,
     paddingVertical: 8,
@@ -639,9 +674,10 @@ const styles = StyleSheet.create({
       width: 0,
       height: 2,
     },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    shadowOpacity: Platform.OS === 'ios' ? 0.15 : 0.1,
+    shadowRadius: Platform.OS === 'ios' ? 12 : 8,
     elevation: 8,
+    overflow: 'hidden',
   },
   dragHandle: {
     position: 'absolute',
@@ -680,10 +716,10 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
   tabIcon: {
-    fontSize: 20,
+    // Icon size is controlled by the Ionicons size prop
   },
   tabIconActive: {
-    color: '#007AFF',
+    color: Colors.orange,
   },
   tabIconInactive: {
     color: Colors.textPrimary,
@@ -693,7 +729,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   tabLabelActive: {
-    color: '#007AFF',
+    color: Colors.orange,
   },
   tabLabelInactive: {
     color: Colors.textPrimary,

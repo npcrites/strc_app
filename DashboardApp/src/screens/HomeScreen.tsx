@@ -10,6 +10,7 @@ import {
   RefreshControl,
   Dimensions,
   Animated,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -27,9 +28,10 @@ import { filterDashboardByTimeRange } from '../utils/dashboardFilter';
 
 type RootStackParamList = {
   AssetDetail: { ticker: string };
+  Settings: undefined;
 };
 
-type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'AssetDetail'>;
+type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 type TimeRange = '1W' | '1M' | '3M' | '1Y' | 'ALL';
 type ContentFilter = 'Total' | 'Assets' | 'Dividends';
@@ -75,6 +77,8 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const [assetNames, setAssetNames] = useState<Record<string, string>>({});
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const modalOpacity = useRef(new Animated.Value(0)).current;
   
   // Store all data for client-side filtering (Coinbase-style)
   const allDataRef = useRef<DashboardSnapshot | null>(null);
@@ -158,6 +162,23 @@ export default function HomeScreen() {
       setData(filteredData);
     }
   }, [timeRange]);
+
+  // Animate overlay when modal visibility changes
+  useEffect(() => {
+    if (showLogoutModal) {
+      Animated.timing(modalOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(modalOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [showLogoutModal]);
 
   // Update portfolio value color animation when value changes
   useEffect(() => {
@@ -595,6 +616,22 @@ export default function HomeScreen() {
   previousPortfolioCentsTensRef.current = portfolioCentsTens;
   previousPortfolioCentsOnesRef.current = portfolioCentsOnes;
 
+  // Get first letter of user's name
+  const getInitial = (): string => {
+    if (user?.full_name) {
+      return user.full_name.trim().charAt(0).toUpperCase();
+    }
+    if (user?.email) {
+      return user.email.trim().charAt(0).toUpperCase();
+    }
+    return '?';
+  };
+
+  const handleLogout = async () => {
+    setShowLogoutModal(false);
+    await logout();
+  };
+
   return (
     <>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.backgroundWhite} />
@@ -611,18 +648,18 @@ export default function HomeScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            progressViewOffset={Math.max(insets.top, 20) + 20}
+            progressViewOffset={Math.max(insets.top, 20) + 40}
           />
         }
       >
         {/* Total Portfolio Section */}
-        <View style={[styles.portfolioSection, { paddingTop: Math.max(insets.top, 20) + 20 }]}>
-          {/* Logout Button - Positioned absolutely */}
+        <View style={[styles.portfolioSection, { paddingTop: Math.max(insets.top, 20) + 40 }]}>
+          {/* Profile Icon - Positioned absolutely */}
           <TouchableOpacity 
-            onPress={logout} 
-            style={[styles.logoutButton, styles.logoutButtonAbsolute, { top: Math.max(insets.top, 20) + 20, right: 20 }]}
+            onPress={() => navigation.navigate('Settings')} 
+            style={[styles.profileIcon, { top: Math.max(insets.top, 20) + 40, right: 20 }]}
           >
-            <Text style={styles.logoutButtonText}>Logout</Text>
+            <Text style={styles.profileIconText}>{getInitial()}</Text>
           </TouchableOpacity>
         <View style={styles.portfolioValueContainer}>
           <View style={styles.currencyContainer}>
@@ -927,6 +964,31 @@ export default function HomeScreen() {
         })}
       </View>
       </ScrollView>
+
+      {/* Logout Modal */}
+      <Modal
+        visible={showLogoutModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowLogoutModal(false)}
+      >
+        <View style={styles.modalContent}>
+          <View style={[styles.modalContentInner, { paddingTop: Math.max(insets.top, 20) + 20, paddingBottom: Math.max(insets.bottom, 20) }]}>
+            <TouchableOpacity
+              style={[styles.modalCloseButton, { top: Math.max(insets.top, 20) + 20 }]}
+              onPress={() => setShowLogoutModal(false)}
+            >
+              <Text style={styles.modalCloseButtonText}>✕</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.logoutButtonModal}
+              onPress={handleLogout}
+            >
+              <Text style={styles.logoutButtonModalText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -954,20 +1016,53 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: Colors.textPrimary,
   },
-  logoutButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: Colors.backgroundGrey,
-  },
-  logoutButtonAbsolute: {
+  profileIcon: {
     position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.textPrimary,
+    justifyContent: 'center',
+    alignItems: 'center',
     zIndex: 10,
   },
-  logoutButtonText: {
-    fontSize: 14,
+  profileIconText: {
+    fontSize: 18,
     fontWeight: '600',
+    color: Colors.backgroundWhite,
+  },
+  modalContent: {
+    flex: 1,
+    backgroundColor: Colors.backgroundWhite,
+  },
+  modalContentInner: {
+    flex: 1,
+    paddingHorizontal: 20,
+  },
+  modalCloseButton: {
+    position: 'absolute',
+    left: 20,
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  modalCloseButtonText: {
+    fontSize: 24,
+    fontWeight: '300',
     color: Colors.textPrimary,
+  },
+  logoutButtonModal: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 'auto',
+    marginBottom: 20,
+  },
+  logoutButtonModalText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.red,
   },
   loadingContainer: {
     flex: 1,

@@ -257,10 +257,10 @@ export default function AssetDetailScreen() {
     if (previousValue !== null && currentValue !== previousValue && leftmostChangePosition !== -1) {
       if (isIncrease) {
         priceDirectionRef.current = 'increasing';
-        setPriceColor(Colors.greenDark);
+        setPriceColor(Colors.orange);
       } else {
         priceDirectionRef.current = 'decreasing';
-        setPriceColor(Colors.redDark);
+        setPriceColor(Colors.textSecondary);
       }
 
       previousPriceRef.current = currentValue;
@@ -528,21 +528,35 @@ export default function AssetDetailScreen() {
               </View>
             </View>
           </View>
-          <View style={[styles.priceChangeContainer, { marginLeft: PRICE_CHANGE_MARGIN_LEFT }]}>
-            <Text style={[styles.priceChangeArrow, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
-              {isPositive ? '↑' : '↓'}
-            </Text>
-            <Text style={[styles.priceChangeText, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
-              {formatCurrency(Math.abs(priceChange))}
-            </Text>
-            <View style={[
-              styles.priceChangePercentPill,
-              isPositive ? styles.priceChangePercentPillPositive : styles.priceChangePercentPillNegative
-            ]}>
-              <Text style={styles.priceChangePercentPillText}>
-                {Math.abs(priceChangePercent).toFixed(2)}%
+          <View style={styles.priceChangeRow}>
+            <View style={[styles.priceChangeContainer, { marginLeft: PRICE_CHANGE_MARGIN_LEFT }]}>
+              <Text style={[styles.priceChangeArrow, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
+                {isPositive ? '↑' : '↓'}
               </Text>
+              <Text style={[styles.priceChangeText, isPositive ? styles.priceChangePositive : styles.priceChangeNegative]}>
+                {formatCurrency(Math.abs(priceChange))}
+              </Text>
+              <View style={[
+                styles.priceChangePercentPill,
+                isPositive ? styles.priceChangePercentPillPositive : styles.priceChangePercentPillNegative
+              ]}>
+                <Text style={[
+                  styles.priceChangePercentPillText,
+                  isPositive ? styles.priceChangePercentPillTextPositive : styles.priceChangePercentPillTextNegative
+                ]}>
+                  {Math.abs(priceChangePercent).toFixed(2)}%
+                </Text>
+              </View>
             </View>
+            {/* RTH/ETH Toggle */}
+            <TouchableOpacity
+              style={styles.rthEthToggle}
+              onPress={() => setTradingHoursMode(tradingHoursMode === 'market' ? 'extended' : 'market')}
+            >
+              <Text style={styles.rthEthButtonText}>
+                {tradingHoursMode === 'market' ? 'RTH' : 'ETH'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -552,18 +566,19 @@ export default function AssetDetailScreen() {
             <Chart
               data={chartData}
               height={250}
-              width={screenWidth - 40}
+              width={screenWidth}
               timeRange={timeRange}
               tradingHoursMode={tradingHoursMode}
               config={{
-                lineColor: Colors.chartOrange,
-                gradientStartColor: Colors.chartOrange,
-                gradientEndColor: Colors.chartOrange,
+                lineColor: isPositive ? Colors.orange : Colors.textSecondary,
+                gradientStartColor: isPositive ? Colors.orange : Colors.textSecondary,
+                gradientEndColor: isPositive ? Colors.orange : Colors.textSecondary,
                 gradientStartOpacity: 0.3,
                 gradientEndOpacity: 0,
                 curved: timeRange !== '1W', // Straight lines for 1W (spiky), curves for longer timeframes
                 showDots: false,
                 enableDrag: true,
+                fadeIntensity: 0.75, // Increased fade intensity for more pronounced effect
               }}
             />
           ) : (
@@ -575,63 +590,26 @@ export default function AssetDetailScreen() {
 
         {/* Time Range Selector */}
         <View style={styles.timeRangeContainer}>
-          {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
-            <TouchableOpacity
-              key={range}
-              style={[
-                styles.timeRangeButton,
-                timeRange === range && styles.timeRangeButtonActive,
-              ]}
-              onPress={() => setTimeRange(range)}
-            >
-              <Text
+          <View style={styles.timeRangeButtons}>
+            {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
+              <TouchableOpacity
+                key={range}
                 style={[
-                  styles.timeRangeButtonText,
-                  timeRange === range && styles.timeRangeButtonTextActive,
+                  styles.timeRangeButton,
+                  timeRange === range && styles.timeRangeButtonActive,
                 ]}
+                onPress={() => setTimeRange(range)}
               >
-                {range}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Trading Hours Mode Toggle */}
-        <View style={styles.tradingHoursContainer}>
-          <Text style={styles.tradingHoursLabel}>Trading Hours:</Text>
-          <View style={styles.tradingHoursToggle}>
-            <TouchableOpacity
-              style={[
-                styles.tradingHoursButton,
-                tradingHoursMode === 'market' && styles.tradingHoursButtonActive,
-              ]}
-              onPress={() => setTradingHoursMode('market')}
-            >
-              <Text
-                style={[
-                  styles.tradingHoursButtonText,
-                  tradingHoursMode === 'market' && styles.tradingHoursButtonTextActive,
-                ]}
-              >
-                Market Hours
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.tradingHoursButton,
-                tradingHoursMode === 'extended' && styles.tradingHoursButtonActive,
-              ]}
-              onPress={() => setTradingHoursMode('extended')}
-            >
-              <Text
-                style={[
-                  styles.tradingHoursButtonText,
-                  tradingHoursMode === 'extended' && styles.tradingHoursButtonTextActive,
-                ]}
-              >
-                Extended Hours
-              </Text>
-            </TouchableOpacity>
+                <Text
+                  style={[
+                    styles.timeRangeButtonText,
+                    timeRange === range && styles.timeRangeButtonTextActive,
+                  ]}
+                >
+                  {range}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </View>
       </ScrollView>
@@ -654,6 +632,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 24,
+    position: 'relative',
   },
   backButton: {
     paddingVertical: 8,
@@ -661,6 +640,11 @@ const styles = StyleSheet.create({
     paddingRight: 4,
     alignSelf: 'flex-start',
     marginBottom: 8,
+    marginLeft: -4, // Compensate for header padding to align with content
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 32,
+    minHeight: 32,
   },
   backButtonText: {
     fontSize: 24,
@@ -720,10 +704,15 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
     minWidth: 20, // Ensure consistent width for single digits
   },
+  priceChangeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginTop: 2,
+  },
   priceChangeContainer: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    marginTop: 2,
   },
   priceChangeArrow: {
     fontSize: 16,
@@ -734,10 +723,10 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   priceChangePositive: {
-    color: Colors.greenDark,
+    color: Colors.orange,
   },
   priceChangeNegative: {
-    color: Colors.redDark,
+    color: Colors.textSecondary,
   },
   priceChangePercentPill: {
     marginLeft: 8,
@@ -746,20 +735,25 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   priceChangePercentPillPositive: {
-    backgroundColor: Colors.greenDark,
+    backgroundColor: 'transparent',
   },
   priceChangePercentPillNegative: {
-    backgroundColor: Colors.redDark,
+    backgroundColor: 'transparent',
   },
   priceChangePercentPillText: {
-    color: Colors.backgroundWhite,
     fontSize: 12,
     fontWeight: '600',
   },
+  priceChangePercentPillTextPositive: {
+    color: Colors.orange,
+  },
+  priceChangePercentPillTextNegative: {
+    color: Colors.textSecondary,
+  },
   chartContainer: {
-    paddingHorizontal: 20,
     marginBottom: 12,
     minHeight: 250,
+    overflow: 'hidden',
   },
   noDataContainer: {
     height: 250,
@@ -810,7 +804,12 @@ const styles = StyleSheet.create({
   timeRangeContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 20,
+  },
+  timeRangeButtons: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     gap: 8,
   },
   timeRangeButton: {
@@ -830,6 +829,17 @@ const styles = StyleSheet.create({
   timeRangeButtonTextActive: {
     color: Colors.backgroundWhite,
     fontWeight: '600',
+  },
+  rthEthToggle: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: Colors.backgroundGrey,
+  },
+  rthEthButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: Colors.textPrimary,
   },
   loadingContainer: {
     flex: 1,

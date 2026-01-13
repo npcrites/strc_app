@@ -2,9 +2,11 @@ import React, { useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { ThemeProvider } from './src/context/ThemeContext';
 import BottomTabs from './src/navigation/BottomTabs';
 import LoginScreen from './src/screens/LoginScreen';
 import AssetDetailScreen from './src/screens/AssetDetailScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -56,6 +58,13 @@ function AppNavigator() {
                 animation: 'slide_from_right',
               }}
             />
+            <Stack.Screen 
+              name="Settings" 
+              component={SettingsScreen}
+              options={{
+                animation: 'slide_from_right',
+              }}
+            />
           </>
         ) : (
           <Stack.Screen 
@@ -73,9 +82,11 @@ function AppNavigator() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppNavigator />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <AppNavigator />
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 
