@@ -88,6 +88,79 @@ class MarketHoursService:
         
         return True
     
+    def get_last_business_day_on_or_before(self, target_date: date) -> date:
+        """
+        Get the last trading day on or before target_date.
+        If target_date is a trading day, returns target_date.
+        Otherwise, returns the most recent trading day before it.
+        
+        Args:
+            target_date: Target date
+            
+        Returns:
+            Last business day on or before target_date
+        """
+        current = target_date
+        max_iterations = 10  # Safety limit (shouldn't need more than 3-4 days for weekends/holidays)
+        
+        for _ in range(max_iterations):
+            if self.is_trading_day(current):
+                return current
+            current -= timedelta(days=1)
+        
+        # Fallback (shouldn't reach here, but return target_date if somehow we do)
+        logger.warning(f"Could not find business day on or before {target_date}, returning target_date")
+        return target_date
+    
+    def get_business_day_before(self, ex_date: date) -> date:
+        """
+        Get the business day BEFORE ex_date (ex_date - 1 day, then find previous business day).
+        This is used for calculating invest_by_date for ex-dividend dates.
+        Investors need to buy before the ex-dividend date to receive the dividend.
+        
+        Example: If ex_date is March 16 (Monday), returns March 13 (Friday).
+        If ex_date is March 17 (Tuesday), returns March 16 (Monday).
+        If ex_date is March 15 (Sunday), returns March 13 (Friday).
+        
+        Args:
+            ex_date: Ex-dividend date
+            
+        Returns:
+            Business day before ex_date (last business day on or before ex_date - 1 day)
+        """
+        # Start from the day before the ex-date
+        day_before = ex_date - timedelta(days=1)
+        
+        # Find the last business day on or before that date
+        return self.get_last_business_day_on_or_before(day_before)
+    
+    def get_next_business_day_on_or_after(self, target_date: date) -> date:
+        """
+        Get the next trading day on or after target_date.
+        If target_date is a trading day, returns target_date.
+        Otherwise, returns the next trading day after it.
+        
+        Used for calculating pay_date_adjusted for payment dates.
+        If payment date falls on a weekend/holiday, payment is made on the next business day.
+        
+        Args:
+            target_date: Target date (e.g., payment date)
+            
+        Returns:
+            Next business day on or after target_date
+        """
+        current = target_date
+        max_iterations = 10  # Safety limit (shouldn't need more than 3-4 days for weekends/holidays)
+        
+        for _ in range(max_iterations):
+            if self.is_trading_day(current):
+                return current
+            current += timedelta(days=1)
+        
+        # Fallback (shouldn't reach here, but return target_date if somehow we do)
+        logger.warning(f"Could not find business day on or after {target_date}, returning target_date")
+        return target_date
+    
     def is_market_open(self, timestamp: datetime) -> bool:
         """
         Check if market is open at given timestamp (in UTC)

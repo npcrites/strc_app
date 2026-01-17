@@ -206,6 +206,13 @@ class TestHoldingsEndpoint:
         # Total dividends should be sum of paid dividends only (300.50 + 350.25 + 595.05 = 1245.80)
         expected_total_dividends = 300.50 + 350.25 + 595.05
         assert data["total_dividends"] == pytest.approx(expected_total_dividends, rel=1e-6)
+        
+        # Check payout dates are included (upcoming dividend should be present)
+        assert "next_ex_date" in data
+        assert "next_pay_date" in data
+        # The upcoming dividend from test_dividends should be returned
+        assert data["next_ex_date"] == "2024-10-01"
+        assert data["next_pay_date"] == "2024-10-15"
     
     def test_get_holdings_with_position_no_dividends(
         self, test_client, test_position, test_asset_price, test_token
@@ -223,6 +230,9 @@ class TestHoldingsEndpoint:
         assert data["position_amount"] == 12450.00
         assert data["shares"] == 48.2
         assert data["total_dividends"] == 0.0
+        # No upcoming dividends, so payout dates should be None
+        assert data["next_ex_date"] is None
+        assert data["next_pay_date"] is None
     
     def test_get_holdings_no_position(
         self, test_client, test_user, test_token
@@ -240,6 +250,9 @@ class TestHoldingsEndpoint:
         assert data["position_amount"] == 0.0
         assert data["shares"] == 0.0
         assert data["total_dividends"] == 0.0
+        # No position, so no payout dates
+        assert data["next_ex_date"] is None
+        assert data["next_pay_date"] is None
     
     def test_get_holdings_position_without_market_value(
         self, test_client, test_user, test_asset_price, test_token
@@ -330,6 +343,10 @@ class TestHoldingsEndpoint:
         # The upcoming dividend (100.00) should not be included
         expected_total = 300.50 + 350.25 + 595.05
         assert data["total_dividends"] == pytest.approx(expected_total, rel=1e-6)
+        
+        # Should return upcoming dividend dates
+        assert data["next_ex_date"] == "2024-10-01"
+        assert data["next_pay_date"] == "2024-10-15"
     
     def test_get_holdings_unauthorized(self, db_session):
         """Test that unauthenticated requests are rejected"""

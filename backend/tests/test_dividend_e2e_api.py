@@ -309,6 +309,10 @@ class TestDividendE2EFlow:
         # Should NOT include upcoming dividend
         assert data["total_dividends"] != pytest.approx(float(paid_dividend.amount + upcoming_dividend.amount), rel=0.01)
         assert data["total_dividends"] < float(paid_dividend.amount + upcoming_dividend.amount)
+        
+        # Should return upcoming dividend dates
+        assert data["next_ex_date"] == upcoming_dividend.ex_date.isoformat()
+        assert data["next_pay_date"] == upcoming_dividend.pay_date.isoformat()
 
 
 if __name__ == "__main__":

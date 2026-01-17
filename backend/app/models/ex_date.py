@@ -13,9 +13,10 @@ class ExDate(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, nullable=False, index=True)  # e.g., "STRC", "SATA", "MSTR-A"
-    ex_date = Column(Date, nullable=False, index=True)  # Ex-dividend date
+    ex_date = Column(Date, nullable=False, index=True)  # Raw ex-dividend date
+    invest_by_date = Column(Date, nullable=True, index=True)  # Last business day on or before ex_date
     dividend_amount = Column(String, nullable=True)  # Expected dividend amount per share
-    pay_date = Column(Date, nullable=True)  # Expected payment date
+    pay_date = Column(Date, nullable=True)  # Raw payment date
     source = Column(String, nullable=True)  # e.g., "fmp_api", "manual", "api", "calendar"
     notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

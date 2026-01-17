@@ -74,6 +74,10 @@ class HoldingsResponse(BaseModel):
     position_amount: float  # Total value of position (shares * current_price)
     shares: float  # Number of shares held
     total_dividends: float  # Sum of all dividends paid for this ticker
+    next_ex_date: Optional[date] = None  # Next upcoming ex-dividend date (raw)
+    next_invest_by_date: Optional[date] = None  # Last business day on or before ex_date (adjusted)
+    next_pay_date: Optional[date] = None  # Payment date for next dividend (raw)
+    next_pay_date_adjusted: Optional[date] = None  # Next business day on or after pay_date (adjusted)
 
 
 def _normalize_snapshots_per_day(
@@ -2630,11 +2634,28 @@ async def get_asset_holdings(
         total_dividends_decimal = total_dividends_query.scalar() or Decimal('0.00')
         total_dividends = float(total_dividends_decimal)
         
+        # Get next upcoming dividend (for ex-date and pay-date)
+        next_dividend = None
+        if position:
+            today = date.today()
+            
+            next_dividend = db.query(Dividend).filter(
+                Dividend.user_id == user_id,
+                Dividend.ticker == ticker_upper,
+                Dividend.status == DividendStatus.UPCOMING,
+                Dividend.ex_date.isnot(None),
+                Dividend.ex_date >= today
+            ).order_by(Dividend.ex_date.asc()).first()
+        
         return HoldingsResponse(
             ticker=ticker_upper,
             position_amount=position_amount,
             shares=shares,
-            total_dividends=total_dividends
+            total_dividends=total_dividends,
+            next_ex_date=next_dividend.ex_date if next_dividend and next_dividend.ex_date else None,
+            next_invest_by_date=next_dividend.invest_by_date if next_dividend and next_dividend.invest_by_date else None,
+            next_pay_date=next_dividend.pay_date if next_dividend and next_dividend.pay_date else None,
+            next_pay_date_adjusted=next_dividend.pay_date_adjusted if next_dividend and next_dividend.pay_date_adjusted else None
         )
     
     except HTTPException:

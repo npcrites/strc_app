@@ -34,6 +34,22 @@ export function formatDate(dateString: string | null | undefined): string {
   if (!dateString) {
     return '';
   }
+  
+  // If date-only string (YYYY-MM-DD), parse as local date to avoid timezone issues
+  // date-only strings without time are parsed as UTC, which causes off-by-one errors
+  // in timezones behind UTC (like EST where 2026-03-16 00:00 UTC = 2026-03-15 19:00 EST)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    // Parse as local date (YYYY-MM-DD format)
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month is 0-indexed
+    return new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    }).format(date);
+  }
+  
+  // For dates with time/timezone info, parse normally
   const date = new Date(dateString);
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
@@ -46,6 +62,21 @@ export function formatDateShort(dateString: string | null | undefined): string {
   if (!dateString) {
     return '';
   }
+  
+  // If date-only string (YYYY-MM-DD), parse as local date to avoid timezone issues
+  // date-only strings without time are parsed as UTC, which causes off-by-one errors
+  // in timezones behind UTC (like EST where 2026-03-16 00:00 UTC = 2026-03-15 19:00 EST)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    // Parse as local date (YYYY-MM-DD format)
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month is 0-indexed
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+    }).format(date);
+  }
+  
+  // For dates with time/timezone info, parse normally
   const date = new Date(dateString);
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',

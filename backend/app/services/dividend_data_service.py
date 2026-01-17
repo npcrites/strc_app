@@ -11,6 +11,7 @@ from app.models.ex_date import ExDate
 from app.models.dividend import Dividend, DividendStatus
 from app.models.position import Position
 from app.core.config import settings
+from app.services.market_hours_service import MarketHoursService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class DividendDataService:
         self.api_key = settings.ALPHA_VANTAGE_API_KEY
         if not self.api_key:
             logger.warning("Alpha Vantage API key not configured")
+        self.market_hours_service = MarketHoursService()
     
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests"""
@@ -291,7 +293,12 @@ class DividendDataService:
     
     def sync_ticker_dividends(self, db: Session, ticker: str) -> Dict:
         """
-        Sync dividend data for a specific ticker from FMP API
+        Sync dividend data for a specific ticker from Alpha Vantage API.
+        
+        Behavior:
+        - If API response contains an ex-date: Override existing (manual or API) with API data
+        - If API response contains new ex-date: Create new entry
+        - If manual ex-date NOT in API response: Preserve manual entry (don't touch)
         
         Args:
             db: Database session
@@ -316,9 +323,12 @@ class DividendDataService:
             if not dividends:
                 return stats
             
-            # Upsert each dividend record
+            # Upsert each dividend record from API response
             for div_data in dividends:
                 try:
+                    if not div_data.get("ex_date"):
+                        continue  # Skip records without ex_date
+                    
                     # Check if record exists
                     existing = db.query(ExDate).filter(
                         and_(
@@ -328,29 +338,41 @@ class DividendDataService:
                     ).first()
                     
                     if existing:
-                        # Update existing record if new data is available
+                        # API contains this ex-date: Override existing (manual or API) with API data
                         updated = False
-                        if div_data.get("pay_date") and not existing.pay_date:
-                            existing.pay_date = div_data["pay_date"]
-                            updated = True
+                        if div_data.get("pay_date"):
+                            # Override pay_date if API provides it (even if manual entry has one)
+                            if existing.pay_date != div_data["pay_date"]:
+                                existing.pay_date = div_data["pay_date"]
+                                updated = True
                         if div_data.get("dividend_amount"):
-                            # Update if missing or if different
-                            if not existing.dividend_amount or existing.dividend_amount != div_data["dividend_amount"]:
+                            # Override dividend_amount if API provides it (even if manual entry has one)
+                            if existing.dividend_amount != div_data["dividend_amount"]:
                                 existing.dividend_amount = div_data["dividend_amount"]
                                 updated = True
-                        # Always update source if not already set
-                        if not existing.source or existing.source == "manual":
+                        # Always update source to alpha_vantage_api when API provides the data
+                        if existing.source != "alpha_vantage_api":
                             existing.source = "alpha_vantage_api"
+                            updated = True
+                        
+                        # Recalculate invest_by_date (business day before ex_date)
+                        invest_by_date = self.market_hours_service.get_business_day_before(existing.ex_date)
+                        if existing.invest_by_date != invest_by_date:
+                            existing.invest_by_date = invest_by_date
                             updated = True
                         
                         if updated:
                             existing.updated_at = datetime.utcnow()
                             stats["updated"] += 1
                     else:
-                        # Create new record
+                        # Calculate invest_by_date (business day before ex_date)
+                        invest_by_date = self.market_hours_service.get_business_day_before(div_data["ex_date"])
+                        
+                        # Create new record for ex-date in API response
                         ex_date = ExDate(
                             ticker=ticker,
                             ex_date=div_data["ex_date"],
+                            invest_by_date=invest_by_date,
                             pay_date=div_data.get("pay_date"),
                             dividend_amount=div_data.get("dividend_amount"),
                             source="alpha_vantage_api"
@@ -361,6 +383,9 @@ class DividendDataService:
                 except Exception as e:
                     logger.error(f"Error processing dividend record for {ticker}: {str(e)}", exc_info=True)
                     stats["errors"] += 1
+            
+            # Manual ex-dates NOT in API response are automatically preserved
+            # (we only loop through API response items, so we don't touch manual entries)
             
             db.commit()
             logger.info(f"Synced dividends for {ticker}: {stats['created']} created, {stats['updated']} updated")
@@ -591,11 +616,21 @@ class DividendDataService:
                         status_date = ex_date_record.pay_date if ex_date_record.pay_date else ex_date_record.ex_date
                         dividend_status = DividendStatus.PAID if status_date < today else DividendStatus.UPCOMING
                         
+                        # Calculate adjusted dates
+                        # Use ex_date_record.invest_by_date if already calculated, otherwise calculate it
+                        if ex_date_record.invest_by_date:
+                            invest_by_date = ex_date_record.invest_by_date
+                        else:
+                            invest_by_date = self.market_hours_service.get_business_day_before(ex_date_record.ex_date)
+                        
                         if existing_dividend:
                             # Update existing dividend record
                             updated = False
                             if ex_date_record.pay_date and not existing_dividend.pay_date:
                                 existing_dividend.pay_date = ex_date_record.pay_date
+                                # Calculate pay_date_adjusted (next business day on or after pay_date)
+                                if ex_date_record.pay_date:
+                                    existing_dividend.pay_date_adjusted = self.market_hours_service.get_next_business_day_on_or_after(ex_date_record.pay_date)
                                 # Update status based on new pay_date
                                 if ex_date_record.pay_date < today:
                                     existing_dividend.status = DividendStatus.PAID
@@ -620,17 +655,39 @@ class DividendDataService:
                                 existing_dividend.source = "alpha_vantage_api"
                                 updated = True
                             
+                            # Update invest_by_date (last business day on or before ex_date)
+                            if existing_dividend.invest_by_date != invest_by_date:
+                                existing_dividend.invest_by_date = invest_by_date
+                                updated = True
+                            
+                            # Update pay_date_adjusted if pay_date exists
+                            if existing_dividend.pay_date:
+                                pay_date_adjusted = self.market_hours_service.get_next_business_day_on_or_after(existing_dividend.pay_date)
+                                if existing_dividend.pay_date_adjusted != pay_date_adjusted:
+                                    existing_dividend.pay_date_adjusted = pay_date_adjusted
+                                    updated = True
+                            
                             if updated:
                                 existing_dividend.updated_at = datetime.utcnow()
                                 count += 1
                         else:
                             # Create new dividend record
+                            # Use ex_date as fallback for pay_date if not provided
+                            pay_date_value = ex_date_record.pay_date if ex_date_record.pay_date else ex_date_record.ex_date
+                            
+                            # Calculate pay_date_adjusted (next business day on or after pay_date)
+                            pay_date_adjusted = None
+                            if pay_date_value:
+                                pay_date_adjusted = self.market_hours_service.get_next_business_day_on_or_after(pay_date_value)
+                            
                             dividend = Dividend(
                                 user_id=position.user_id,
                                 position_id=position.id,
                                 ticker=ticker,
                                 ex_date=ex_date_record.ex_date,
-                                pay_date=ex_date_record.pay_date,
+                                invest_by_date=invest_by_date,
+                                pay_date=pay_date_value,
+                                pay_date_adjusted=pay_date_adjusted,
                                 dividend_per_share=dividend_per_share,
                                 shares_at_ex_date=shares,
                                 amount=amount,

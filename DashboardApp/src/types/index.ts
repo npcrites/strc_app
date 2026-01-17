@@ -105,5 +105,9 @@ export interface Holdings {
   position_amount: number;
   shares: number;
   total_dividends: number;
+  next_ex_date?: string | null;  // Next upcoming ex-dividend date (raw, ISO format)
+  next_invest_by_date?: string | null;  // Last business day on or before ex_date (adjusted, ISO format)
+  next_pay_date?: string | null;  // Payment date for next dividend (raw, ISO format)
+  next_pay_date_adjusted?: string | null;  // Next business day on or after pay_date (adjusted, ISO format)
 }
 

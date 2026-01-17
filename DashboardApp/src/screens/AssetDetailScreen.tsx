@@ -18,7 +18,7 @@ import ViewShot from 'react-native-view-shot';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { api } from '../services/api';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, formatDateShort } from '../utils/formatters';
 import { getColors } from '../constants/colors';
 import AssetChart from '../components/AssetChart';
 import TimeRangeSelector, { TimeRange } from '../components/TimeRangeSelector';
@@ -819,6 +819,45 @@ export default function AssetDetailScreen() {
           </View>
         )}
 
+        {/* My Payouts Section - Only show if user holds the asset and has upcoming dividend */}
+        {holdings && holdings.shares > 0 && (holdings.next_ex_date || holdings.next_pay_date) && (
+          <View style={styles.payoutsContainer}>
+            <View style={styles.payoutsHeader}>
+              <Text style={styles.payoutsTitle}>My Payouts</Text>
+            </View>
+            
+            <View style={styles.payoutsRow}>
+              {(holdings.next_invest_by_date || holdings.next_ex_date) && (
+                <View style={styles.payoutCard}>
+                  <View style={styles.payoutIconContainer}>
+                    <Text style={styles.payoutIcon}>📅</Text>
+                  </View>
+                  <Text style={styles.payoutLabel}>Invest By</Text>
+                  <Text style={styles.payoutDate}>
+                    {holdingsLoading ? '...' : formatDateShort(holdings.next_invest_by_date || holdings.next_ex_date)}
+                  </Text>
+                </View>
+              )}
+              
+              {(holdings.next_invest_by_date || holdings.next_ex_date) && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (
+                <View style={styles.payoutDivider} />
+              )}
+              
+              {(holdings.next_pay_date_adjusted || holdings.next_pay_date) && (
+                <View style={styles.payoutCard}>
+                  <View style={[styles.payoutIconContainer, styles.payoutIconContainerGreen]}>
+                    <Text style={styles.payoutIcon}>$</Text>
+                  </View>
+                  <Text style={styles.payoutLabel}>Payday</Text>
+                  <Text style={styles.payoutDate}>
+                    {holdingsLoading ? '...' : formatDateShort(holdings.next_pay_date_adjusted || holdings.next_pay_date)}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* Details Section */}
         {(navData?.current_nav !== null && navData?.current_nav !== undefined) && (
           <View style={styles.detailsContainer}>
@@ -1144,6 +1183,66 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     fontFamily: 'ChakraPetch-Bold',
     color: colors.green,
     marginBottom: 4,
+  },
+  payoutsContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  payoutsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  payoutsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
+  },
+  payoutsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  payoutCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  payoutIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  payoutIconContainerGreen: {
+    backgroundColor: isDark ? 'rgba(76, 175, 80, 0.2)' : 'rgba(76, 175, 80, 0.15)',
+  },
+  payoutIcon: {
+    fontSize: 24,
+  },
+  payoutLabel: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
+  payoutDate: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
+  },
+  payoutDivider: {
+    width: 1,
+    height: 60,
+    backgroundColor: colors.green,
+    marginHorizontal: 16,
+    opacity: 0.5,
   },
   loadingContainer: {
     flex: 1,
