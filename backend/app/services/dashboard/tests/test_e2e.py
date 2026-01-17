@@ -86,8 +86,8 @@ def test_positions(db_session, test_user):
         ),
         Position(
             user_id=test_user.id,
-            ticker="AAPL",
-            name="Apple Inc.",
+            ticker="MSFT",
+            name="Microsoft Corporation",
             shares=Decimal("10.000000"),
             cost_basis=Decimal("1500.00"),
             market_value=Decimal("1750.00"),

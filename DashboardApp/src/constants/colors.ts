@@ -7,10 +7,10 @@ const lightColors = {
   // Primary colors
   orange: '#f7931a',
   orangeLight: '#FFE5DD',
-  green: '#4CAF50',
+  green: '#2DD4BF', // Match dark mode - Teal green for gains/positive
   greenLight: '#E8F5E9',
   greenDark: '#2E8B57', // Green for gains/increases
-  red: '#F44336',
+  red: '#D32F2F', // Match dark mode - Muted red for losses/negative
   redLight: '#FFEBEE',
   redDark: '#D20A2E', // Red for losses/decreases
   

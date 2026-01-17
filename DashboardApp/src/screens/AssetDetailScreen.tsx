@@ -25,12 +25,16 @@ import AssetChart from '../components/AssetChart';
 import TimeRangeSelector, { TimeRange } from '../components/TimeRangeSelector';
 import BackButton from '../components/BackButton';
 import ExportButton from '../components/ExportButton';
+import MSTRSymbol from '../components/MSTRSymbol';
+import ASSTSymbol from '../components/ASSTSymbol';
+import { hasMSTRParent, hasASTTParent, getParentTicker } from '../utils/assetUtils';
 import { ParentNAVHistory, Position, Holdings } from '../types';
 import { fetchAssetPriceHistory, transformToChartData, invalidateChartCache } from '../services/chartData';
 import { TradingHoursMode } from '../utils/marketHours';
 
 type RootStackParamList = {
   AssetDetail: { ticker: string };
+  PayoutsDetail: { ticker: string };
 };
 
 type AssetDetailRouteProp = RouteProp<RootStackParamList, 'AssetDetail'>;
@@ -586,7 +590,21 @@ export default function AssetDetailScreen() {
         >
           {/* Header Content */}
           <View style={styles.header}>
-            <Text style={styles.assetName}>{data?.name || ticker}</Text>
+            <View style={styles.assetNameRow}>
+              {hasMSTRParent(ticker) ? (
+                <MSTRSymbol 
+                  size={24} 
+                  color={getColors(isDark).orange} 
+                  style={styles.parentLogo}
+                />
+              ) : hasASTTParent(ticker) ? (
+                <ASSTSymbol 
+                  size={24} 
+                  style={styles.parentLogo}
+                />
+              ) : null}
+              <Text style={styles.assetName}>{data?.name || ticker}</Text>
+            </View>
             <Text style={styles.tickerText}>{ticker}</Text>
             
             {/* Current Price */}
@@ -797,8 +815,8 @@ export default function AssetDetailScreen() {
           onChange={setTimeRange}
         />
 
-        {/* My Holdings Section - Only show if user holds the asset */}
-        {holdings && holdings.shares > 0 && (
+        {/* My Holdings Section - Show if user holds the asset OR has pending payout */}
+        {holdings && (holdings.shares > 0 || (holdings.next_pay_date_adjusted || holdings.next_pay_date)) && (
           <View style={styles.holdingsContainer}>
             <Text style={styles.holdingsTitle}>My Holdings</Text>
             
@@ -806,14 +824,14 @@ export default function AssetDetailScreen() {
               <View style={styles.holdingsLeft}>
                 <Text style={styles.holdingsLabel}>Amount Held</Text>
                 <Text style={styles.holdingsAmount}>
-                  {holdingsLoading ? '...' : formatCurrency(holdings.position_amount)}
+                  {holdingsLoading ? '...' : formatCurrency(holdings.position_amount || 0)}
                 </Text>
               </View>
               
               <View style={styles.holdingsRight}>
                 <Text style={styles.holdingsLabel}>Dividends Earned</Text>
                 <Text style={styles.holdingsDividends}>
-                  {holdingsLoading ? '...' : formatCurrency(holdings.total_dividends)}
+                  {holdingsLoading ? '...' : formatCurrency(holdings.total_dividends || 0)}
                 </Text>
               </View>
             </View>
@@ -821,12 +839,12 @@ export default function AssetDetailScreen() {
         )}
 
         {/* Separator line between My Holdings and My Payouts */}
-        {holdings && holdings.shares > 0 && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (
+        {holdings && (holdings.shares > 0 || (holdings.next_pay_date_adjusted || holdings.next_pay_date)) && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (
           <View style={styles.sectionDivider} />
         )}
 
-        {/* My Payouts Section - Show if user holds the asset and has upcoming payment (even if ex-date has passed) */}
-        {holdings && holdings.shares > 0 && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (() => {
+        {/* My Payouts Section - Show if user has upcoming payment (even if ex-date has passed or position is sold) */}
+        {holdings && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (() => {
           const investByDate = holdings.next_invest_by_date || holdings.next_ex_date;
           const today = new Date().toISOString().split('T')[0];
           const showInvestBy = investByDate && investByDate >= today;
@@ -834,16 +852,21 @@ export default function AssetDetailScreen() {
           
           return (
             <View style={styles.payoutsContainer}>
-              <View style={styles.payoutsHeader}>
+              <TouchableOpacity 
+                style={styles.payoutsHeader}
+                onPress={() => navigation.navigate('PayoutsDetail', { ticker })}
+                activeOpacity={0.7}
+              >
                 <Text style={styles.payoutsTitle}>My Payouts</Text>
-              </View>
+                <Ionicons name="chevron-forward" size={20} color={getColors(isDark).textSecondary} />
+              </TouchableOpacity>
               
               <View style={styles.payoutsRow}>
                 {/* Only show "Invest By" if ex-date/invest_by_date is still upcoming */}
                 {showInvestBy && (
                   <View style={styles.payoutCard}>
                     <View style={styles.payoutIconContainer}>
-                      <Ionicons name="calendar-outline" size={18} color={getColors(isDark).textPrimary} />
+                      <Ionicons name="calendar-outline" size={18} color={getColors(isDark).textSecondary} />
                     </View>
                     <Text style={styles.payoutLabel}>Invest By</Text>
                     <Text style={styles.payoutDate}>
@@ -867,7 +890,14 @@ export default function AssetDetailScreen() {
                     </View>
                     <Text style={styles.payoutLabel}>Payday</Text>
                     <Text style={styles.payoutDate}>
-                      {holdingsLoading ? '...' : formatDateShort(holdings.next_pay_date_adjusted || holdings.next_pay_date)}
+                      {holdingsLoading ? '...' : (
+                        <>
+                          {holdings.next_payout_amount != null && holdings.next_payout_amount > 0
+                            ? `${formatCurrency(holdings.next_payout_amount)} • ${formatDateShort(holdings.next_pay_date_adjusted || holdings.next_pay_date)}`
+                            : formatDateShort(holdings.next_pay_date_adjusted || holdings.next_pay_date)
+                          }
+                        </>
+                      )}
                     </Text>
                   </View>
                 )}
@@ -877,20 +907,32 @@ export default function AssetDetailScreen() {
         })()}
 
         {/* Separator line between My Payouts and Details */}
-        {(navData?.current_nav !== null && navData?.current_nav !== undefined) && (
+        {((navData?.current_nav !== null && navData?.current_nav !== undefined) || holdings?.daily_volume != null) && (
           <View style={styles.sectionDivider} />
         )}
 
         {/* Details Section */}
-        {(navData?.current_nav !== null && navData?.current_nav !== undefined) && (
+        {((navData?.current_nav !== null && navData?.current_nav !== undefined) || holdings?.daily_volume != null) && (
           <View style={styles.detailsContainer}>
             <Text style={styles.detailsSectionTitle}>Details</Text>
+            
+            {navData?.current_nav !== null && navData?.current_nav !== undefined && (
               <View style={styles.detailsRow}>
                 <Text style={styles.detailsLabel}>mNAV ({navData.parent_ticker})</Text>
                 <Text style={styles.detailsValue}>
-                  {navLoading ? '...' : (navData.current_nav !== null && navData.current_nav !== undefined) ? navData.current_nav.toFixed(4) : '0.0000'}
+                  {navLoading ? '...' : navData.current_nav.toFixed(4)}
                 </Text>
               </View>
+            )}
+            
+            {holdings?.daily_volume != null && (
+              <View style={styles.detailsRow}>
+                <Text style={styles.detailsLabel}>Daily Volume</Text>
+                <Text style={styles.detailsValue}>
+                  {holdingsLoading ? '...' : (holdings.daily_volume ?? 0).toLocaleString()}
+                </Text>
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
@@ -949,13 +991,20 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     color: colors.textPrimary,
     marginBottom: 4,
   },
+  assetNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   assetName: {
     fontSize: 14,
     fontWeight: 'bold',
     fontFamily: 'Inter-Bold',
     color: colors.textSecondary,
-    marginBottom: 12,
-    textAlign: 'left',
+    marginLeft: 6,
+  },
+  parentLogo: {
+    marginRight: 0,
   },
   priceSection: {
     paddingHorizontal: 20,
@@ -1254,10 +1303,12 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     marginBottom: 8,
   },
   payoutIconContainerGreen: {
-    backgroundColor: colors.green,
+    backgroundColor: isDark ? 'rgba(45, 212, 191, 0.2)' : 'rgba(45, 212, 191, 0.15)', // colors.green with opacity
   },
   payoutIcon: {
     fontSize: 18,
+    fontWeight: 'bold',
+    color: colors.green, // Match gain/loss green color
   },
   payoutLabel: {
     fontSize: 13,
@@ -1274,7 +1325,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
   payoutDivider: {
     width: 40,
     height: 1,
-    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.15)', // Lighter grey divider
   },
   loadingContainer: {
     flex: 1,

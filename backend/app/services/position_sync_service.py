@@ -185,9 +185,16 @@ class PositionSyncService:
             updated_count = 0
             
             # Process each position from Alpaca
+            excluded_tickers_upper = {t.upper() for t in settings.EXCLUDED_TICKERS}
+            
             for alpaca_pos in alpaca_positions:
                 ticker = alpaca_pos.get("symbol", "").upper()
                 if not ticker:
+                    continue
+                
+                # Skip excluded tickers
+                if ticker in excluded_tickers_upper:
+                    logger.info(f"Skipping excluded ticker {ticker} for user {user.id}")
                     continue
                 
                 seen_tickers.add(ticker)
@@ -280,9 +287,19 @@ class PositionSyncService:
             
             # Remove positions that no longer exist in Alpaca
             # BUT preserve positions that are in ALLOWED_TICKERS (manually managed positions)
+            # Also remove positions that are in EXCLUDED_TICKERS (even if they exist in Alpaca)
             removed_count = 0
             allowed_tickers_upper = {t.upper() for t in settings.ALLOWED_TICKERS}
+            excluded_tickers_upper = {t.upper() for t in settings.EXCLUDED_TICKERS}
+            
             for ticker, position in existing_positions.items():
+                # Always remove excluded tickers
+                if ticker in excluded_tickers_upper:
+                    logger.info(f"Removing excluded ticker {ticker} for user {user.id}")
+                    db.delete(position)
+                    removed_count += 1
+                    continue
+                
                 if ticker not in seen_tickers:
                     # Don't remove positions that are in ALLOWED_TICKERS (manually managed)
                     if ticker in allowed_tickers_upper:

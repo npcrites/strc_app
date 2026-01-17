@@ -16,6 +16,9 @@ import { dashboardApi } from '../services/dashboard';
 import { DashboardSnapshot, ActivityItem, ActivityType } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { getColors } from '../constants/colors';
+import MSTRSymbol from '../components/MSTRSymbol';
+import ASSTSymbol from '../components/ASSTSymbol';
+import { hasMSTRParent, hasASTTParent } from '../utils/assetUtils';
 
 export default function ActivityScreen() {
   const { token, loading: authLoading, logout } = useAuth();
@@ -185,24 +188,40 @@ export default function ActivityScreen() {
       {upcomingDividends.length > 0 && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>UPCOMING</Text>
-          {upcomingDividends.map((item, index) => (
+          {upcomingDividends.map((item, index) => {
+            const isMSTR = item.ticker ? hasMSTRParent(item.ticker) : false;
+            const isASST = item.ticker ? hasASTTParent(item.ticker) : false;
+            return (
             <View key={index} style={styles.upcomingCard}>
               <View style={styles.upcomingCardLeft}>
-                <View
-                  style={[
-                    styles.upcomingIcon,
-                    { backgroundColor: getColors(isDark).cardYellow },
-                  ]}
-                >
-                  <LinearGradient
-                    colors={['rgba(255, 255, 255, 0.6)', 'rgba(255, 255, 255, 0.1)', 'transparent']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFillObject}
+                {isMSTR ? (
+                  <MSTRSymbol 
+                    size={40} 
+                    color={getColors(isDark).orange} 
+                    style={styles.assetSymbol}
                   />
-                  <View style={styles.iconGlow} />
-                  <Text style={styles.upcomingIconText}>⏰</Text>
-                </View>
+                ) : isASST ? (
+                  <ASSTSymbol 
+                    size={40} 
+                    style={styles.assetSymbol}
+                  />
+                ) : (
+                  <View
+                    style={[
+                      styles.upcomingIcon,
+                      { backgroundColor: getColors(isDark).cardYellow },
+                    ]}
+                  >
+                    <LinearGradient
+                      colors={['rgba(255, 255, 255, 0.6)', 'rgba(255, 255, 255, 0.1)', 'transparent']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={StyleSheet.absoluteFillObject}
+                    />
+                    <View style={styles.iconGlow} />
+                    <Text style={styles.upcomingIconText}>⏰</Text>
+                  </View>
+                )}
                 <View style={styles.upcomingCardContent}>
                   <View style={styles.upcomingCardHeader}>
                     <Text style={styles.upcomingTicker}>
@@ -230,7 +249,8 @@ export default function ActivityScreen() {
                 </Text>
               </View>
             </View>
-          ))}
+            );
+          })}
         </View>
       )}
 
@@ -242,34 +262,49 @@ export default function ActivityScreen() {
         ) : (
           recentActivities.map((item, index) => {
             const iconColor = getActivityIconColor(item.activity_type as ActivityType);
+            const isMSTR = item.ticker ? hasMSTRParent(item.ticker) : false;
+            const isASST = item.ticker ? hasASTTParent(item.ticker) : false;
             return (
             <View key={index} style={styles.recentItem}>
-              <View
-                style={[
-                  styles.recentIcon,
-                  { backgroundColor: iconColor + '20' },
-                ]}
-              >
-                <LinearGradient
-                  colors={[
-                    'rgba(255, 255, 255, 0.5)',
-                    'rgba(255, 255, 255, 0.1)',
-                    'transparent'
-                  ]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFillObject}
+              {isMSTR ? (
+                <MSTRSymbol 
+                  size={40} 
+                  color={getColors(isDark).orange} 
+                  style={styles.assetSymbol}
                 />
-                <View style={[styles.iconGlow, { backgroundColor: iconColor + '30' }]} />
-                <Text
+              ) : isASST ? (
+                <ASSTSymbol 
+                  size={40} 
+                  style={styles.assetSymbol}
+                />
+              ) : (
+                <View
                   style={[
-                    styles.recentIconText,
-                    { color: iconColor },
+                    styles.recentIcon,
+                    { backgroundColor: iconColor + '20' },
                   ]}
                 >
-                  {getActivityIcon(item.activity_type as ActivityType)}
-                </Text>
-              </View>
+                  <LinearGradient
+                    colors={[
+                      'rgba(255, 255, 255, 0.5)',
+                      'rgba(255, 255, 255, 0.1)',
+                      'transparent'
+                    ]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFillObject}
+                  />
+                  <View style={[styles.iconGlow, { backgroundColor: iconColor + '30' }]} />
+                  <Text
+                    style={[
+                      styles.recentIconText,
+                      { color: iconColor },
+                    ]}
+                  >
+                    {getActivityIcon(item.activity_type as ActivityType)}
+                  </Text>
+                </View>
+              )}
               <View style={styles.recentContent}>
                 <Text style={styles.recentTicker}>
                   {item.ticker || 'N/A'}
@@ -486,6 +521,9 @@ const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create
   recentIconText: {
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  assetSymbol: {
+    marginRight: 12,
   },
   recentContent: {
     flex: 1,

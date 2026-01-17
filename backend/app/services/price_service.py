@@ -2,10 +2,11 @@
 Price Service for fetching and caching live market prices from Alpaca
 """
 import httpx
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date, timezone
+from decimal import Decimal
 from app.models.asset_price import AssetPrice
 from app.models.position import Position
 from app.core.config import settings
@@ -59,29 +60,30 @@ class PriceService:
             logger.error(f"Error getting active symbols: {str(e)}", exc_info=True)
             return []
     
-    def fetch_prices_from_alpaca(self, symbols: List[str]) -> Dict[str, Optional[float]]:
+    def fetch_prices_from_alpaca(self, symbols: List[str]) -> Tuple[Dict[str, Optional[float]], Dict[str, Optional[int]]]:
         """
-        Fetch latest prices from Alpaca API for given symbols
+        Fetch latest prices and volumes from Alpaca API for given symbols
         
         Args:
             symbols: List of stock symbols to fetch
             
         Returns:
-            Dictionary mapping symbol to price (or None if unavailable)
+            Tuple of (prices_dict, volumes_dict) mapping symbol to price/volume (or None if unavailable)
         """
         if not symbols:
-            return {}
+            return {}, {}
         
         if not self.api_key or not self.secret_key:
             logger.warning("Alpaca credentials not configured, skipping price fetch")
-            return {}
+            return {}, {}
         
         prices = {}
+        volumes = {}
         
         try:
             # Use Alpaca Data API /v2/stocks/snapshots endpoint
             # Format: GET /v2/stocks/snapshots?symbols=AAPL,MSFT,GOOGL
-            # Response: {"AAPL": {"latestTrade": {"p": 150.25, ...}, ...}, "MSFT": {...}}
+            # Response: {"AAPL": {"latestTrade": {"p": 150.25, ...}, "dailyBar": {"v": 12345, ...}, ...}, "MSFT": {...}}
             
             # Batch symbols (Alpaca supports up to 100 symbols per request)
             batch_size = 100
@@ -104,57 +106,76 @@ class PriceService:
                         logger.warning(f"Symbols not found in Alpaca: {symbols_str}")
                         for symbol in batch:
                             prices[symbol.upper()] = None
+                            volumes[symbol.upper()] = None
                         continue
                     
                     response.raise_for_status()
                     data = response.json()
                     
-                    # Parse response: {"AAPL": {"latestTrade": {"p": 150.25, ...}, ...}}
+                    # Parse response: {"AAPL": {"latestTrade": {"p": 150.25, ...}, "dailyBar": {"v": 12345, ...}, ...}}
                     # Response is a dict with symbols as keys
                     for symbol, snapshot_data in data.items():
+                        symbol_upper = symbol.upper()
                         if snapshot_data and isinstance(snapshot_data, dict):
                             # Get price from latestTrade
                             if "latestTrade" in snapshot_data:
                                 trade = snapshot_data["latestTrade"]
                                 if trade and "p" in trade:
-                                    prices[symbol.upper()] = float(trade["p"])
+                                    prices[symbol_upper] = float(trade["p"])
                                 else:
-                                    prices[symbol.upper()] = None
+                                    prices[symbol_upper] = None
                             else:
                                 # Fallback: try dailyBar close price
                                 if "dailyBar" in snapshot_data:
                                     bar = snapshot_data["dailyBar"]
                                     if bar and "c" in bar:
-                                        prices[symbol.upper()] = float(bar["c"])
+                                        prices[symbol_upper] = float(bar["c"])
                                     else:
-                                        prices[symbol.upper()] = None
+                                        prices[symbol_upper] = None
                                 else:
-                                    prices[symbol.upper()] = None
+                                    prices[symbol_upper] = None
+                            
+                            # Extract volume from dailyBar
+                            if "dailyBar" in snapshot_data:
+                                bar = snapshot_data["dailyBar"]
+                                if bar and "v" in bar:
+                                    volumes[symbol_upper] = int(bar["v"])
+                                else:
+                                    volumes[symbol_upper] = None
+                            else:
+                                volumes[symbol_upper] = None
                         else:
-                            prices[symbol.upper()] = None
+                            prices[symbol_upper] = None
+                            volumes[symbol_upper] = None
                     
                     # Mark symbols that weren't in response as None
                     for symbol in batch:
-                        if symbol.upper() not in prices:
-                            prices[symbol.upper()] = None
+                        symbol_upper = symbol.upper()
+                        if symbol_upper not in prices:
+                            prices[symbol_upper] = None
+                        if symbol_upper not in volumes:
+                            volumes[symbol_upper] = None
                 
                 # Small delay to respect rate limits
                 if i + batch_size < len(symbols):
                     import time
                     time.sleep(0.1)
             
-            logger.info(f"Fetched prices for {len([p for p in prices.values() if p is not None])}/{len(symbols)} symbols")
-            return prices
+            logger.info(
+                f"Fetched prices for {len([p for p in prices.values() if p is not None])}/{len(symbols)} symbols, "
+                f"volumes for {len([v for v in volumes.values() if v is not None])}/{len(symbols)} symbols"
+            )
+            return prices, volumes
             
         except httpx.HTTPStatusError as e:
             logger.error(f"Alpaca API HTTP error: {e.response.status_code} - {e.response.text}")
-            return {}
+            return {}, {}
         except httpx.RequestError as e:
             logger.error(f"Alpaca API request error: {str(e)}")
-            return {}
+            return {}, {}
         except Exception as e:
             logger.error(f"Error fetching prices from Alpaca: {str(e)}", exc_info=True)
-            return {}
+            return {}, {}
     
     def update_price_cache(self, db: Session, prices: Dict[str, Optional[float]]) -> int:
         """
@@ -204,6 +225,61 @@ class PriceService:
         except Exception as e:
             db.rollback()
             logger.error(f"Error updating price cache: {str(e)}", exc_info=True)
+            return 0
+    
+    def update_volume_cache(self, db: Session, volumes: Dict[str, Optional[int]]) -> int:
+        """
+        Store daily volume in AssetMetrics table.
+        Updates existing record for today, or creates new one.
+        
+        Args:
+            db: Database session
+            volumes: Dictionary mapping symbol to volume
+            
+        Returns:
+            Number of volumes updated/created
+        """
+        from app.models.asset_metrics import AssetMetrics
+        
+        updated_count = 0
+        today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+        
+        try:
+            for symbol, volume in volumes.items():
+                if volume is None:
+                    continue
+                
+                # Check if volume record exists for today
+                existing = db.query(AssetMetrics).filter(
+                    AssetMetrics.ticker == symbol,
+                    AssetMetrics.metric_type == "volume",
+                    AssetMetrics.is_parent_level == False,
+                    AssetMetrics.timestamp >= today_start
+                ).first()
+                
+                if existing:
+                    # Update existing record
+                    existing.value = Decimal(str(volume))
+                    updated_count += 1
+                else:
+                    # Create new record for today
+                    metric = AssetMetrics(
+                        ticker=symbol,
+                        metric_type="volume",
+                        value=Decimal(str(volume)),
+                        timestamp=today_start,
+                        is_parent_level=False
+                    )
+                    db.add(metric)
+                    updated_count += 1
+            
+            db.commit()
+            logger.info(f"Updated {updated_count} volume records in cache")
+            return updated_count
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error updating volume cache: {str(e)}", exc_info=True)
             return 0
     
     def get_price(self, db: Session, symbol: str) -> Optional[float]:
@@ -292,7 +368,7 @@ class PriceService:
     
     def update_all_prices(self, db: Session) -> Dict[str, int]:
         """
-        Full workflow: get active symbols, fetch prices, update cache
+        Full workflow: get active symbols, fetch prices and volumes, update cache
         
         Args:
             db: Database session
@@ -306,21 +382,26 @@ class PriceService:
             
             if not symbols:
                 logger.info("No active symbols to update")
-                return {"symbols_checked": 0, "prices_fetched": 0, "prices_updated": 0}
+                return {"symbols_checked": 0, "prices_fetched": 0, "prices_updated": 0, "volumes_fetched": 0, "volumes_updated": 0}
             
-            # Fetch prices from Alpaca
-            prices = self.fetch_prices_from_alpaca(symbols)
+            # Fetch prices and volumes from Alpaca
+            prices, volumes = self.fetch_prices_from_alpaca(symbols)
             
-            # Update cache
-            updated_count = self.update_price_cache(db, prices)
+            # Update price cache
+            price_count = self.update_price_cache(db, prices)
+            
+            # Update volume cache
+            volume_count = self.update_volume_cache(db, volumes)
             
             return {
                 "symbols_checked": len(symbols),
                 "prices_fetched": len([p for p in prices.values() if p is not None]),
-                "prices_updated": updated_count
+                "prices_updated": price_count,
+                "volumes_fetched": len([v for v in volumes.values() if v is not None]),
+                "volumes_updated": volume_count
             }
             
         except Exception as e:
             logger.error(f"Error in update_all_prices: {str(e)}", exc_info=True)
-            return {"symbols_checked": 0, "prices_fetched": 0, "prices_updated": 0}
+            return {"symbols_checked": 0, "prices_fetched": 0, "prices_updated": 0, "volumes_fetched": 0, "volumes_updated": 0}
 

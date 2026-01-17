@@ -23,6 +23,8 @@ from app.models.user import User
 from app.models.position import Position
 from app.models.ex_date import ExDate
 from app.models.dividend import Dividend, DividendStatus
+from app.models.portfolio_snapshot import PortfolioSnapshot
+from app.models.position_snapshot import PositionSnapshot
 
 
 # Test database setup
@@ -479,6 +481,181 @@ class TestDividendDataServiceUserDividends:
         count = dividend_service.create_user_dividends_from_exdates(db_session, "STRC")
         
         assert count == 0
+    
+    def test_create_user_dividends_uses_position_snapshot_for_past_ex_date(
+        self, db_session, test_user, test_position, dividend_service
+    ):
+        """Test that shares_at_ex_date uses position snapshot for past ex-dates, not current shares"""
+        # Create a past ex-date (30 days ago)
+        past_ex_date = date.today() - timedelta(days=30)
+        past_pay_date = past_ex_date + timedelta(days=15)
+        
+        # Create ExDate record
+        ex_date = ExDate(
+            ticker="STRC",
+            ex_date=past_ex_date,
+            pay_date=past_pay_date,
+            dividend_amount="0.916666667",
+            source="alpha_vantage_api"
+        )
+        db_session.add(ex_date)
+        db_session.commit()
+        
+        # Create a portfolio snapshot on the ex-date with 50 shares
+        portfolio_snapshot = PortfolioSnapshot(
+            user_id=test_user.id,
+            timestamp=datetime.combine(past_ex_date, datetime.min.time()),
+            total_value=Decimal("5000.00"),
+            investment_value=Decimal("5000.00"),
+            cash_balance=Decimal("0.00")
+        )
+        db_session.add(portfolio_snapshot)
+        db_session.flush()
+        
+        # Create position snapshot with 50 shares (different from current 100)
+        position_snapshot = PositionSnapshot(
+            portfolio_snapshot_id=portfolio_snapshot.id,
+            ticker="STRC",
+            shares=Decimal("50.000000"),
+            cost_basis=Decimal("5000.00"),
+            current_value=Decimal("5000.00"),
+            price_per_share=Decimal("100.00")
+        )
+        db_session.add(position_snapshot)
+        db_session.commit()
+        
+        # Update current position to 100 shares (different from snapshot)
+        test_position.shares = Decimal("100.000000")
+        db_session.commit()
+        
+        # Create user dividends - should use snapshot shares (50), not current shares (100)
+        count = dividend_service.create_user_dividends_from_exdates(db_session, "STRC")
+        
+        assert count == 1
+        
+        # Verify dividend uses snapshot shares, not current shares
+        dividend = db_session.query(Dividend).filter(
+            Dividend.user_id == test_user.id,
+            Dividend.ticker == "STRC",
+            Dividend.ex_date == past_ex_date
+        ).first()
+        
+        assert dividend is not None
+        # Should use snapshot shares (50), not current position shares (100)
+        assert dividend.shares_at_ex_date == Decimal("50.000000")
+        # Amount should be calculated based on snapshot shares: 50 * 0.9167 ≈ 45.84
+        expected_amount = Decimal("50.000000") * Decimal("0.916666667")
+        assert abs(float(dividend.amount) - float(expected_amount)) < 0.01
+        assert dividend.status == DividendStatus.PAID  # Past pay_date
+    
+    def test_create_user_dividends_uses_current_shares_for_future_ex_date(
+        self, db_session, test_user, test_position, dividend_service
+    ):
+        """Test that shares_at_ex_date uses current shares for future ex-dates"""
+        # Create a future ex-date (30 days from now)
+        future_ex_date = date.today() + timedelta(days=30)
+        future_pay_date = future_ex_date + timedelta(days=15)
+        
+        # Create ExDate record
+        ex_date = ExDate(
+            ticker="STRC",
+            ex_date=future_ex_date,
+            pay_date=future_pay_date,
+            dividend_amount="0.916666667",
+            source="alpha_vantage_api"
+        )
+        db_session.add(ex_date)
+        db_session.commit()
+        
+        # Set current position to 100 shares
+        test_position.shares = Decimal("100.000000")
+        db_session.commit()
+        
+        # Create user dividends - should use current shares (100) for future ex-date
+        count = dividend_service.create_user_dividends_from_exdates(db_session, "STRC")
+        
+        assert count == 1
+        
+        # Verify dividend uses current shares
+        dividend = db_session.query(Dividend).filter(
+            Dividend.user_id == test_user.id,
+            Dividend.ticker == "STRC",
+            Dividend.ex_date == future_ex_date
+        ).first()
+        
+        assert dividend is not None
+        # Should use current shares (100) for future ex-date
+        assert dividend.shares_at_ex_date == Decimal("100.000000")
+        # Amount should be calculated based on current shares: 100 * 0.9167 ≈ 91.67
+        expected_amount = Decimal("100.000000") * Decimal("0.916666667")
+        assert abs(float(dividend.amount) - float(expected_amount)) < 0.01
+        assert dividend.status == DividendStatus.UPCOMING  # Future pay_date
+    
+    def test_update_dividend_locks_shares_after_ex_date_passes(
+        self, db_session, test_user, test_position, dividend_service
+    ):
+        """Test that shares_at_ex_date is locked after ex-date passes and doesn't update with new purchases"""
+        # Create an ex-date that was yesterday
+        yesterday = date.today() - timedelta(days=1)
+        pay_date = yesterday + timedelta(days=15)
+        
+        # Create ExDate record
+        ex_date = ExDate(
+            ticker="STRC",
+            ex_date=yesterday,
+            pay_date=pay_date,
+            dividend_amount="0.916666667",
+            source="alpha_vantage_api"
+        )
+        db_session.add(ex_date)
+        db_session.commit()
+        
+        # Create portfolio snapshot on ex-date with 50 shares
+        portfolio_snapshot = PortfolioSnapshot(
+            user_id=test_user.id,
+            timestamp=datetime.combine(yesterday, datetime.min.time()),
+            total_value=Decimal("5000.00"),
+            investment_value=Decimal("5000.00"),
+            cash_balance=Decimal("0.00")
+        )
+        db_session.add(portfolio_snapshot)
+        db_session.flush()
+        
+        position_snapshot = PositionSnapshot(
+            portfolio_snapshot_id=portfolio_snapshot.id,
+            ticker="STRC",
+            shares=Decimal("50.000000"),
+            cost_basis=Decimal("5000.00"),
+            current_value=Decimal("5000.00"),
+            price_per_share=Decimal("100.00")
+        )
+        db_session.add(position_snapshot)
+        db_session.commit()
+        
+        # Create dividend with snapshot shares (50)
+        count = dividend_service.create_user_dividends_from_exdates(db_session, "STRC")
+        assert count == 1
+        
+        dividend = db_session.query(Dividend).filter(
+            Dividend.user_id == test_user.id,
+            Dividend.ticker == "STRC",
+            Dividend.ex_date == yesterday
+        ).first()
+        
+        assert dividend.shares_at_ex_date == Decimal("50.000000")
+        original_amount = dividend.amount
+        
+        # User buys more shares AFTER ex-date (now has 150 shares)
+        test_position.shares = Decimal("150.000000")
+        db_session.commit()
+        
+        # Run update again - shares_at_ex_date should NOT change (locked)
+        count = dividend_service.create_user_dividends_from_exdates(db_session, "STRC")
+        
+        # Should update (count may be 1 if other fields changed), but shares_at_ex_date should stay locked
+        db_session.refresh(dividend)
+        assert dividend.shares_at_ex_date == Decimal("50.000000"), "Shares should remain locked after ex-date"
+        assert dividend.amount == original_amount, "Amount should not change if shares are locked"
 
 
 class TestDividendDataServiceIntegration:

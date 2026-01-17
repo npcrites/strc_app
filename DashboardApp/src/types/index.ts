@@ -109,5 +109,7 @@ export interface Holdings {
   next_invest_by_date?: string | null;  // Last business day on or before ex_date (adjusted, ISO format)
   next_pay_date?: string | null;  // Payment date for next dividend (raw, ISO format)
   next_pay_date_adjusted?: string | null;  // Next business day on or after pay_date (adjusted, ISO format)
+  next_payout_amount?: number | null;  // Payout amount for next dividend (based on shares_at_ex_date)
+  daily_volume?: number | null;  // Daily volume from AssetMetrics cache
 }
 

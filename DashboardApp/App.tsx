@@ -9,6 +9,7 @@ import BottomTabs from './src/navigation/BottomTabs';
 import LoginScreen from './src/screens/LoginScreen';
 import AssetDetailScreen from './src/screens/AssetDetailScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import PayoutsDetailScreen from './src/screens/PayoutsDetailScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -92,6 +93,12 @@ function AppNavigator() {
             ticker: (ticker: string) => ticker,
           },
         },
+        PayoutsDetail: {
+          path: 'payouts/:ticker',
+          parse: {
+            ticker: (ticker: string) => ticker,
+          },
+        },
         Settings: 'settings',
       },
     },
@@ -125,6 +132,19 @@ function AppNavigator() {
             <Stack.Screen 
               name="AssetDetail" 
               component={AssetDetailScreen}
+              options={{
+                headerShown: false,
+                headerBackVisible: false,
+                headerBackTitleVisible: false,
+                headerLeft: () => null,
+                header: () => null,
+                animation: 'slide_from_right',
+                gestureEnabled: true,
+              }}
+            />
+            <Stack.Screen 
+              name="PayoutsDetail" 
+              component={PayoutsDetailScreen}
               options={{
                 headerShown: false,
                 headerBackVisible: false,

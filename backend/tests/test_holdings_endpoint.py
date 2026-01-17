@@ -22,9 +22,11 @@ from app.main import app
 from app.models.user import User
 from app.models.position import Position
 from app.models.dividend import Dividend, DividendStatus
+from app.models.ex_date import ExDate
 from app.models.asset_price import AssetPrice
 from app.core.security import create_access_token
 from datetime import timedelta
+from app.services.market_hours_service import MarketHoursService
 
 
 # Test database setup
@@ -131,6 +133,16 @@ def test_asset_price(db_session):
 @pytest.fixture(scope="function")
 def test_dividends(db_session, test_user, test_position):
     """Create test dividends"""
+    # Calculate future dates for upcoming dividend (before creating the list)
+    today = date.today()
+    future_ex_date = today + timedelta(days=10)  # Ex-date 10 days from now
+    future_pay_date = today + timedelta(days=25)  # Pay-date 25 days from now
+    # Calculate pay_date_adjusted (next business day on or after pay_date)
+    from app.services.market_hours_service import MarketHoursService
+    market_hours_service = MarketHoursService()
+    pay_date_adjusted = market_hours_service.get_next_business_day_on_or_after(future_pay_date)
+    invest_by_date = market_hours_service.get_business_day_before(future_ex_date)
+    
     dividends = [
         Dividend(
             user_id=test_user.id,
@@ -165,17 +177,20 @@ def test_dividends(db_session, test_user, test_position):
             shares_at_ex_date=Decimal('48.2'),
             ex_date=date(2024, 7, 1)
         ),
-        # Add an upcoming dividend (should not be counted)
+        # Add an upcoming dividend (should not be counted in total_dividends but should appear in next_pay_date)
+        # Use future dates so it matches the query criteria
         Dividend(
             user_id=test_user.id,
             position_id=test_position.id,
             ticker="STRC",
             amount=Decimal('100.00'),
-            pay_date=date(2024, 10, 15),
+            pay_date=future_pay_date,
+            pay_date_adjusted=pay_date_adjusted,
             status=DividendStatus.UPCOMING,
             dividend_per_share=Decimal('0.50'),
             shares_at_ex_date=Decimal('48.2'),
-            ex_date=date(2024, 10, 1)
+            ex_date=future_ex_date,
+            invest_by_date=invest_by_date
         ),
     ]
     for dividend in dividends:
@@ -211,8 +226,11 @@ class TestHoldingsEndpoint:
         assert "next_ex_date" in data
         assert "next_pay_date" in data
         # The upcoming dividend from test_dividends should be returned
-        assert data["next_ex_date"] == "2024-10-01"
-        assert data["next_pay_date"] == "2024-10-15"
+        today = date.today()
+        future_ex_date = today + timedelta(days=10)
+        future_pay_date = today + timedelta(days=25)
+        assert data["next_ex_date"] == future_ex_date.isoformat()
+        assert data["next_pay_date"] == future_pay_date.isoformat()
     
     def test_get_holdings_with_position_no_dividends(
         self, test_client, test_position, test_asset_price, test_token
@@ -308,7 +326,7 @@ class TestHoldingsEndpoint:
         other_dividend = Dividend(
             user_id=test_user.id,
             position_id=None,
-            ticker="AAPL",
+            ticker="MSFT",
             amount=Decimal('1000.00'),
             pay_date=date(2024, 1, 15),
             status=DividendStatus.PAID
@@ -345,8 +363,11 @@ class TestHoldingsEndpoint:
         assert data["total_dividends"] == pytest.approx(expected_total, rel=1e-6)
         
         # Should return upcoming dividend dates
-        assert data["next_ex_date"] == "2024-10-01"
-        assert data["next_pay_date"] == "2024-10-15"
+        today = date.today()
+        future_ex_date = today + timedelta(days=10)
+        future_pay_date = today + timedelta(days=25)
+        assert data["next_ex_date"] == future_ex_date.isoformat()
+        assert data["next_pay_date"] == future_pay_date.isoformat()
     
     def test_get_holdings_unauthorized(self, db_session):
         """Test that unauthenticated requests are rejected"""
@@ -367,6 +388,88 @@ class TestHoldingsEndpoint:
         finally:
             # Clean up overrides
             app.dependency_overrides.clear()
+    
+    def test_get_holdings_pending_payout_sold_position_strf(
+        self, test_client, test_user, test_token
+    ):
+        """Test getting holdings for STRF when user sold position but has pending payout"""
+        db_session = test_client.app.dependency_overrides[get_db]().__next__()
+        
+        # Create a position that was sold (shares = 0)
+        # This simulates user buying STRF, ex-date passing, then selling before payday
+        position = Position(
+            user_id=test_user.id,
+            ticker="STRF",
+            name="STRF Preferred Stock",
+            shares=Decimal('0.0'),  # User sold the position
+            cost_basis=Decimal('0.00'),
+            market_value=Decimal('0.00'),
+            asset_type="preferred_stock",
+            snapshot_timestamp=datetime.utcnow()
+        )
+        db_session.add(position)
+        db_session.commit()
+        
+        # Create ExDate for STRF with ex-date in the past, pay-date in the future
+        today = date.today()
+        past_ex_date = today - timedelta(days=10)  # Ex-date was 10 days ago
+        future_pay_date = today + timedelta(days=5)  # Pay-date is 5 days from now
+        
+        market_hours_service = MarketHoursService()
+        invest_by_date = market_hours_service.get_business_day_before(past_ex_date)
+        pay_date_adjusted = market_hours_service.get_next_business_day_on_or_after(future_pay_date)
+        
+        ex_date_record = ExDate(
+            ticker="STRF",
+            ex_date=past_ex_date,
+            pay_date=future_pay_date,
+            invest_by_date=invest_by_date,
+            dividend_amount="0.75",
+            source="manual"
+        )
+        db_session.add(ex_date_record)
+        db_session.commit()
+        
+        # Create a Dividend record with status=UPCOMING
+        # User had 100 shares on ex-date, so payout is 100 * 0.75 = 75.00
+        dividend = Dividend(
+            user_id=test_user.id,
+            position_id=position.id,
+            ticker="STRF",
+            amount=Decimal('75.00'),
+            pay_date=future_pay_date,
+            pay_date_adjusted=pay_date_adjusted,
+            status=DividendStatus.UPCOMING,
+            dividend_per_share=Decimal('0.75'),
+            shares_at_ex_date=Decimal('100.0'),  # User had 100 shares on ex-date
+            ex_date=past_ex_date,
+            invest_by_date=invest_by_date,
+            source="manual"
+        )
+        db_session.add(dividend)
+        db_session.commit()
+        
+        # Call the holdings endpoint
+        response = test_client.get(
+            "/api/assets/STRF/holdings",
+            headers={"Authorization": f"Bearer {test_token}"}
+        )
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        # Verify response
+        assert data["ticker"] == "STRF"
+        assert data["shares"] == 0.0  # No current holdings
+        assert data["position_amount"] == 0.0  # No position value
+        assert data["total_dividends"] == 0.0  # No paid dividends yet
+        
+        # Should return pending payout info even though shares = 0
+        assert data["next_ex_date"] == past_ex_date.isoformat()
+        assert data["next_pay_date"] == future_pay_date.isoformat()
+        assert data["next_pay_date_adjusted"] == pay_date_adjusted.isoformat()
+        assert data["next_payout_amount"] == 75.00  # Pending payout amount
+        assert data["next_invest_by_date"] == invest_by_date.isoformat()
 
 
 if __name__ == "__main__":

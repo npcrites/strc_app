@@ -27,6 +27,9 @@ import { getColors } from '../constants/colors';
 import Chart from '../components/Chart';
 import { refreshRateLimiter } from '../utils/rateLimiter';
 import { filterDashboardByTimeRange } from '../utils/dashboardFilter';
+import MSTRSymbol from '../components/MSTRSymbol';
+import ASSTSymbol from '../components/ASSTSymbol';
+import { hasMSTRParent, hasASTTParent } from '../utils/assetUtils';
 
 type RootStackParamList = {
   AssetDetail: { ticker: string };
@@ -964,24 +967,37 @@ export default function HomeScreen() {
               activeOpacity={0.7}
             >
               <View style={styles.assetItemLeft}>
-                <View
-                  style={[
-                    styles.assetIcon,
-                    { backgroundColor: getAssetColor(index) },
-                  ]}
-                >
-                  <LinearGradient
-                    colors={[
-                      'rgba(255, 255, 255, 0.5)',
-                      'rgba(255, 255, 255, 0.1)',
-                      'transparent'
-                    ]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFillObject}
+                {hasMSTRParent(item.ticker) ? (
+                  <MSTRSymbol 
+                    size={40} 
+                    color={getColors(isDark).orange} 
+                    style={styles.assetSymbol}
                   />
-                  <View style={[styles.assetIconGlow, { backgroundColor: getAssetColor(index) + '30' }]} />
-                </View>
+                ) : hasASTTParent(item.ticker) ? (
+                  <ASSTSymbol 
+                    size={40} 
+                    style={styles.assetSymbol}
+                  />
+                ) : (
+                  <View
+                    style={[
+                      styles.assetIcon,
+                      { backgroundColor: getAssetColor(index) },
+                    ]}
+                  >
+                    <LinearGradient
+                      colors={[
+                        'rgba(255, 255, 255, 0.5)',
+                        'rgba(255, 255, 255, 0.1)',
+                        'transparent'
+                      ]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={StyleSheet.absoluteFillObject}
+                    />
+                    <View style={[styles.assetIconGlow, { backgroundColor: getAssetColor(index) + '30' }]} />
+                  </View>
+                )}
                 <View style={styles.assetItemText}>
                   <Text style={styles.assetTicker}>{item.ticker}</Text>
                   <Text style={styles.assetName}>{assetNames[item.ticker] || item.ticker}</Text>
@@ -1335,9 +1351,9 @@ const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create
     flex: 1,
   },
   assetIcon: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     marginRight: 12,
     overflow: 'hidden',
     // iOS shadows for depth
@@ -1355,6 +1371,9 @@ const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create
     width: '50%',
     height: '50%',
     borderRadius: 3,
+  },
+  assetSymbol: {
+    marginRight: 12,
   },
   assetItemText: {
     flex: 1,

@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Allowed tickers for trading
     ALLOWED_TICKERS: List[str] = ["STRC", "STRD", "STRK", "STRF", "SATA"]
     
+    # Excluded tickers (will be filtered out during position sync)
+    EXCLUDED_TICKERS: List[str] = ["AAPL"]
+    
     # CORS (comma-separated string, will be split)
     # Includes Expo default ports: 19000 (Metro), 19006 (Expo Go), 8081 (Metro alternative)
     # Also includes common Expo Go URLs for physical devices

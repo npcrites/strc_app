@@ -78,6 +78,25 @@ class HoldingsResponse(BaseModel):
     next_invest_by_date: Optional[date] = None  # Last business day on or before ex_date (adjusted)
     next_pay_date: Optional[date] = None  # Payment date for next dividend (raw)
     next_pay_date_adjusted: Optional[date] = None  # Next business day on or after pay_date (adjusted)
+    next_payout_amount: Optional[float] = None  # Payout amount for next dividend (based on shares_at_ex_date)
+    daily_volume: Optional[int] = None  # Daily volume from AssetMetrics cache
+
+
+class PayoutItem(BaseModel):
+    """Single payout item"""
+    pay_date: date
+    pay_date_adjusted: Optional[date] = None
+    amount: float
+    ex_date: Optional[date] = None
+    invest_by_date: Optional[date] = None
+    status: str  # "paid" or "upcoming"
+
+
+class PayoutsResponse(BaseModel):
+    """Payouts data for a specific asset"""
+    ticker: str
+    next_payment: Optional[PayoutItem] = None  # Next upcoming payment
+    past_payouts: List[PayoutItem] = []  # Past paid dividends, ordered by date (newest first)
 
 
 def _normalize_snapshots_per_day(
@@ -2636,36 +2655,50 @@ async def get_asset_holdings(
         
         # Get next upcoming dividend (for ex-date and pay-date)
         # Include dividends where ex-date has passed but payment date hasn't occurred yet
-        next_dividend = None
-        if position:
-            today = date.today()
-            
-            # Find dividends that are upcoming based on payment date, even if ex-date has passed
-            # This handles the case where ex-date is in the past but payment is still pending
-            next_dividend = db.query(Dividend).filter(
-                Dividend.user_id == user_id,
-                Dividend.ticker == ticker_upper,
-                Dividend.status == DividendStatus.UPCOMING,
-                or_(
-                    # Ex-date hasn't passed yet
-                    and_(
-                        Dividend.ex_date.isnot(None),
-                        Dividend.ex_date >= today
-                    ),
-                    # OR ex-date has passed but payment date hasn't occurred yet
-                    and_(
-                        Dividend.ex_date.isnot(None),
-                        Dividend.ex_date < today,
-                        or_(
-                            and_(Dividend.pay_date.isnot(None), Dividend.pay_date >= today),
-                            and_(Dividend.pay_date_adjusted.isnot(None), Dividend.pay_date_adjusted >= today)
-                        )
+        # Query regardless of whether user currently holds the position
+        # This handles the case where user sold position after ex-date but before payday
+        today = date.today()
+        
+        # Find dividends that are upcoming based on payment date, even if ex-date has passed
+        # This handles the case where ex-date is in the past but payment is still pending
+        next_dividend = db.query(Dividend).filter(
+            Dividend.user_id == user_id,
+            Dividend.ticker == ticker_upper,
+            Dividend.status == DividendStatus.UPCOMING,
+            or_(
+                # Ex-date hasn't passed yet
+                and_(
+                    Dividend.ex_date.isnot(None),
+                    Dividend.ex_date >= today
+                ),
+                # OR ex-date has passed but payment date hasn't occurred yet
+                and_(
+                    Dividend.ex_date.isnot(None),
+                    Dividend.ex_date < today,
+                    or_(
+                        and_(Dividend.pay_date.isnot(None), Dividend.pay_date >= today),
+                        and_(Dividend.pay_date_adjusted.isnot(None), Dividend.pay_date_adjusted >= today)
                     )
                 )
-            ).order_by(
-                # Order by payment date (adjusted if available) to get the next payment
-                func.coalesce(Dividend.pay_date_adjusted, Dividend.pay_date, Dividend.ex_date).asc()
-            ).first()
+            )
+        ).order_by(
+            # Order by payment date (adjusted if available) to get the next payment
+            func.coalesce(Dividend.pay_date_adjusted, Dividend.pay_date, Dividend.ex_date).asc()
+        ).first()
+        
+        # Get latest daily volume from AssetMetrics cache
+        from app.models.asset_metrics import AssetMetrics
+        from datetime import timezone as tz
+        
+        today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=tz.utc)
+        daily_volume_metric = db.query(AssetMetrics).filter(
+            AssetMetrics.ticker == ticker_upper,
+            AssetMetrics.metric_type == "volume",
+            AssetMetrics.is_parent_level == False,
+            AssetMetrics.timestamp >= today_start
+        ).order_by(AssetMetrics.timestamp.desc()).first()
+        
+        daily_volume = int(daily_volume_metric.value) if daily_volume_metric and daily_volume_metric.value else None
         
         return HoldingsResponse(
             ticker=ticker_upper,
@@ -2675,7 +2708,9 @@ async def get_asset_holdings(
             next_ex_date=next_dividend.ex_date if next_dividend and next_dividend.ex_date else None,
             next_invest_by_date=next_dividend.invest_by_date if next_dividend and next_dividend.invest_by_date else None,
             next_pay_date=next_dividend.pay_date if next_dividend and next_dividend.pay_date else None,
-            next_pay_date_adjusted=next_dividend.pay_date_adjusted if next_dividend and next_dividend.pay_date_adjusted else None
+            next_pay_date_adjusted=next_dividend.pay_date_adjusted if next_dividend and next_dividend.pay_date_adjusted else None,
+            next_payout_amount=float(next_dividend.amount) if next_dividend and next_dividend.amount else None,
+            daily_volume=daily_volume
         )
     
     except HTTPException:
@@ -2685,6 +2720,107 @@ async def get_asset_holdings(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching holdings: {str(e)}"
+        )
+
+
+@router.get("/{ticker}/payouts", response_model=PayoutsResponse)
+async def get_asset_payouts(
+    ticker: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Get all payouts (upcoming and past) for a specific asset.
+    
+    Args:
+        ticker: Asset ticker (e.g., "STRC")
+        db: Database session
+        user: Authenticated user from JWT
+    
+    Returns:
+        PayoutsResponse with next_payment and past_payouts
+    """
+    try:
+        user_id = int(user.get("user_id"))
+        ticker_upper = ticker.upper()
+        today = date.today()
+        
+        # Get next upcoming dividend
+        next_dividend = db.query(Dividend).filter(
+            Dividend.user_id == user_id,
+            Dividend.ticker == ticker_upper,
+            Dividend.status == DividendStatus.UPCOMING,
+            or_(
+                # Ex-date hasn't occurred yet
+                and_(
+                    Dividend.ex_date.isnot(None),
+                    Dividend.ex_date >= today
+                ),
+                # Ex-date has passed but payment date hasn't occurred yet
+                and_(
+                    Dividend.ex_date.isnot(None),
+                    Dividend.ex_date < today,
+                    or_(
+                        and_(Dividend.pay_date.isnot(None), Dividend.pay_date >= today),
+                        and_(Dividend.pay_date_adjusted.isnot(None), Dividend.pay_date_adjusted >= today)
+                    )
+                )
+            )
+        ).order_by(
+            func.coalesce(Dividend.pay_date_adjusted, Dividend.pay_date, Dividend.ex_date).asc()
+        ).first()
+        
+        # Get past paid dividends, ordered by pay_date descending (newest first)
+        past_dividends = db.query(Dividend).filter(
+            Dividend.user_id == user_id,
+            Dividend.ticker == ticker_upper,
+            Dividend.status == DividendStatus.PAID
+        ).order_by(
+            func.coalesce(Dividend.pay_date_adjusted, Dividend.pay_date, Dividend.ex_date).desc()
+        ).all()
+        
+        # Build next_payment if exists
+        next_payment = None
+        if next_dividend:
+            # Ensure we have at least a pay_date or ex_date
+            pay_date_value = next_dividend.pay_date or next_dividend.ex_date
+            if pay_date_value:
+                next_payment = PayoutItem(
+                    pay_date=pay_date_value,
+                    pay_date_adjusted=next_dividend.pay_date_adjusted,
+                    amount=float(next_dividend.amount) if next_dividend.amount else 0.0,
+                    ex_date=next_dividend.ex_date,
+                    invest_by_date=next_dividend.invest_by_date,
+                    status="upcoming"
+                )
+        
+        # Build past_payouts list
+        past_payouts = [
+            PayoutItem(
+                pay_date=div.pay_date or div.ex_date,
+                pay_date_adjusted=div.pay_date_adjusted,
+                amount=float(div.amount) if div.amount else 0.0,
+                ex_date=div.ex_date,
+                invest_by_date=div.invest_by_date,
+                status="paid"
+            )
+            for div in past_dividends
+            if div.pay_date or div.ex_date  # Only include if we have at least one date
+        ]
+        
+        return PayoutsResponse(
+            ticker=ticker_upper,
+            next_payment=next_payment,
+            past_payouts=past_payouts
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching payouts for {ticker}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching payouts: {str(e)}"
         )
 
 

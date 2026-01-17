@@ -10,6 +10,8 @@ from decimal import Decimal
 from app.models.ex_date import ExDate
 from app.models.dividend import Dividend, DividendStatus
 from app.models.position import Position
+from app.models.position_snapshot import PositionSnapshot as PositionSnapshotModel
+from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.core.config import settings
 from app.services.market_hours_service import MarketHoursService
 import logging
@@ -551,6 +553,52 @@ class DividendDataService:
         )
         return overall_stats
     
+    def _get_shares_held_on_date(
+        self, 
+        db: Session, 
+        user_id: int, 
+        ticker: str, 
+        target_date: date
+    ) -> Optional[Decimal]:
+        """
+        Get the number of shares held on a specific date using position snapshots.
+        
+        Args:
+            db: Database session
+            user_id: User identifier
+            ticker: Stock ticker symbol
+            target_date: Date to get shares for (ex-date)
+            
+        Returns:
+            Number of shares held on target_date, or None if no snapshot found
+        """
+        # Convert date to datetime for comparison (use end of day)
+        target_datetime = datetime.combine(target_date, datetime.max.time())
+        
+        # Find the most recent portfolio snapshot on or before the target date
+        portfolio_snapshot = db.query(PortfolioSnapshot).filter(
+            and_(
+                PortfolioSnapshot.user_id == user_id,
+                PortfolioSnapshot.timestamp <= target_datetime
+            )
+        ).order_by(PortfolioSnapshot.timestamp.desc()).first()
+        
+        if not portfolio_snapshot:
+            return None
+        
+        # Find position snapshot for this ticker in that portfolio snapshot
+        position_snapshot = db.query(PositionSnapshotModel).filter(
+            and_(
+                PositionSnapshotModel.portfolio_snapshot_id == portfolio_snapshot.id,
+                PositionSnapshotModel.ticker == ticker.upper()
+            )
+        ).first()
+        
+        if position_snapshot:
+            return Decimal(str(position_snapshot.shares))
+        
+        return None
+    
     def create_user_dividends_from_exdates(self, db: Session, ticker: str) -> int:
         """
         Create or update Dividend records for users who own positions in a ticker,
@@ -600,7 +648,7 @@ class DividendDataService:
                             )
                         ).first()
                         
-                        # Calculate dividend per share and total amount
+                        # Calculate dividend per share
                         dividend_per_share = None
                         if ex_date_record.dividend_amount:
                             try:
@@ -608,8 +656,27 @@ class DividendDataService:
                             except (ValueError, TypeError):
                                 pass
                         
-                        shares = Decimal(str(position.shares))
-                        amount = dividend_per_share * shares if dividend_per_share else Decimal("0")
+                        # Get shares held on ex-date from position snapshots
+                        # If ex-date is today or in the past, use snapshots; otherwise use current shares
+                        ex_date_value = ex_date_record.ex_date
+                        if ex_date_value <= today:
+                            # Ex-date has passed or is today - use position snapshot for accurate share count
+                            shares_at_ex_date = self._get_shares_held_on_date(
+                                db, position.user_id, ticker, ex_date_value
+                            )
+                            # Fallback to current shares if no snapshot found
+                            if shares_at_ex_date is None:
+                                shares_at_ex_date = Decimal(str(position.shares))
+                                logger.warning(
+                                    f"No position snapshot found for user {position.user_id}, "
+                                    f"ticker {ticker} on ex-date {ex_date_value}, using current shares"
+                                )
+                        else:
+                            # Ex-date is in the future - use current shares (will be updated on ex-date)
+                            shares_at_ex_date = Decimal(str(position.shares))
+                        
+                        # Calculate amount based on shares_at_ex_date
+                        amount = dividend_per_share * shares_at_ex_date if dividend_per_share else Decimal("0")
                         
                         # Determine status: PAID if pay_date has passed, otherwise UPCOMING
                         # If no pay_date, use ex_date as fallback
@@ -635,17 +702,38 @@ class DividendDataService:
                                 if ex_date_record.pay_date < today:
                                     existing_dividend.status = DividendStatus.PAID
                                 updated = True
+                            # Update dividend_per_share if changed
                             if dividend_per_share and (
                                 not existing_dividend.dividend_per_share or
                                 existing_dividend.dividend_per_share != dividend_per_share
                             ):
                                 existing_dividend.dividend_per_share = dividend_per_share
-                                existing_dividend.amount = amount
+                                # Recalculate amount based on current shares_at_ex_date
+                                if existing_dividend.shares_at_ex_date:
+                                    existing_dividend.amount = dividend_per_share * existing_dividend.shares_at_ex_date
+                                else:
+                                    existing_dividend.amount = amount
                                 updated = True
-                            if shares != existing_dividend.shares_at_ex_date:
-                                existing_dividend.shares_at_ex_date = shares
-                                existing_dividend.amount = amount if dividend_per_share else existing_dividend.amount
-                                updated = True
+                            
+                            # Update shares_at_ex_date only if ex-date hasn't passed (or is today)
+                            # After ex-date passes, lock in the share count
+                            if ex_date_value <= today:
+                                # Ex-date has passed or is today - use snapshot to get accurate share count
+                                # Only update if different (allows updating on ex-date itself)
+                                if shares_at_ex_date != existing_dividend.shares_at_ex_date:
+                                    existing_dividend.shares_at_ex_date = shares_at_ex_date
+                                    # Recalculate amount based on updated shares_at_ex_date
+                                    if dividend_per_share:
+                                        existing_dividend.amount = dividend_per_share * shares_at_ex_date
+                                    updated = True
+                            else:
+                                # Ex-date is in the future - update if shares changed (user bought more)
+                                if shares_at_ex_date != existing_dividend.shares_at_ex_date:
+                                    existing_dividend.shares_at_ex_date = shares_at_ex_date
+                                    # Recalculate amount based on updated shares_at_ex_date
+                                    if dividend_per_share:
+                                        existing_dividend.amount = dividend_per_share * shares_at_ex_date
+                                    updated = True
                             # Update status to PAID if pay_date has passed
                             if existing_dividend.pay_date and existing_dividend.pay_date < today:
                                 if existing_dividend.status != DividendStatus.PAID:
@@ -689,7 +777,7 @@ class DividendDataService:
                                 pay_date=pay_date_value,
                                 pay_date_adjusted=pay_date_adjusted,
                                 dividend_per_share=dividend_per_share,
-                                shares_at_ex_date=shares,
+                                shares_at_ex_date=shares_at_ex_date,
                                 amount=amount,
                                 status=dividend_status,
                                 source="alpha_vantage_api"

@@ -131,7 +131,7 @@ class MockDataFactory:
                     "name": "Fidelity Brokerage Account",
                     "type": "investment",
                     "subtype": "brokerage",
-                    "balance": Decimal("5600.00")  # STRC + SATA + AAPL = 3150 + 1575 + 875 = 5600
+                    "balance": Decimal("4725.00")  # STRC + SATA = 3150 + 1575 = 4725
                 },
                 {
                     "brokerage_id": brokerages[1].id,
@@ -206,15 +206,6 @@ class MockDataFactory:
                     "cost_basis": Decimal("1500.00"),
                     "market_value": Decimal("1575.00"),
                     "asset_type": "preferred_stock"
-                },
-                {
-                    "account_id": accounts[0].id,
-                    "ticker": "AAPL",
-                    "name": "Apple Inc.",
-                    "shares": Decimal("5.000000"),
-                    "cost_basis": Decimal("750.00"),
-                    "market_value": Decimal("875.00"),
-                    "asset_type": "common_stock"
                 },
                 {
                     "account_id": accounts[1].id,
@@ -356,27 +347,6 @@ class MockDataFactory:
                         "source": "manual"
                     })
             
-            # Find AAPL positions - quarterly dividends (common stock)
-            aapl_positions = [p for p in positions if p.ticker == "AAPL"]
-            for pos in aapl_positions:
-                dividend_per_share = Decimal("0.24")  # $0.24 per share quarterly (typical AAPL)
-                for quarter_offset in range(-2, 1):  # Past 2 quarters + 1 upcoming
-                    pay_date = today + timedelta(days=90 * quarter_offset + 15)  # Offset by 15 days
-                    ex_date = pay_date - timedelta(days=10)
-                    amount = dividend_per_share * pos.shares
-                    
-                    dividends_config.append({
-                        "position_id": pos.id,
-                        "ticker": "AAPL",
-                        "amount": amount,
-                        "pay_date": pay_date,
-                        "status": DividendStatus.PAID if quarter_offset < 0 else DividendStatus.UPCOMING,
-                        "dividend_per_share": dividend_per_share,
-                        "shares_at_ex_date": pos.shares,
-                        "ex_date": ex_date,
-                        "source": "manual"
-                    })
-            
             # Find MSFT positions - quarterly dividends (common stock)
             msft_positions = [p for p in positions if p.ticker == "MSFT"]
             for pos in msft_positions:
@@ -467,14 +437,6 @@ class MockDataFactory:
                     "ex_date": today + timedelta(days=75),
                     "dividend_amount": Decimal("0.50"),
                     "pay_date": today + timedelta(days=90),
-                    "source": "manual",
-                    "notes": "Quarterly dividend"
-                },
-                {
-                    "ticker": "AAPL",
-                    "ex_date": today + timedelta(days=5),
-                    "dividend_amount": Decimal("0.24"),
-                    "pay_date": today + timedelta(days=20),
                     "source": "manual",
                     "notes": "Quarterly dividend"
                 },

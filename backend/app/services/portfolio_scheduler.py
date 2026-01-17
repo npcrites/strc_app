@@ -22,7 +22,7 @@ _scheduler: Optional[BackgroundScheduler] = None
 
 def update_prices_job() -> None:
     """
-    Job function that runs on schedule to update prices.
+    Job function that runs on schedule to update prices and volumes.
     Creates a new database session for each run.
     """
     if not settings.PRICE_UPDATE_ENABLED:
@@ -36,7 +36,8 @@ def update_prices_job() -> None:
         stats = price_service.update_all_prices(db)
         logger.info(
             f"Price update completed: {stats['symbols_checked']} symbols checked, "
-            f"{stats['prices_fetched']} prices fetched, {stats['prices_updated']} updated"
+            f"{stats['prices_fetched']} prices fetched, {stats['prices_updated']} updated, "
+            f"{stats.get('volumes_fetched', 0)} volumes fetched, {stats.get('volumes_updated', 0)} volumes updated"
         )
     except Exception as e:
         logger.error(f"Error in price update job: {str(e)}", exc_info=True)
