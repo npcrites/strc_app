@@ -20,6 +20,7 @@ import { useTheme } from '../context/ThemeContext';
 import { api } from '../services/api';
 import { formatCurrency, formatDateShort } from '../utils/formatters';
 import { getColors } from '../constants/colors';
+import { Ionicons } from '@expo/vector-icons';
 import AssetChart from '../components/AssetChart';
 import TimeRangeSelector, { TimeRange } from '../components/TimeRangeSelector';
 import BackButton from '../components/BackButton';
@@ -819,43 +820,65 @@ export default function AssetDetailScreen() {
           </View>
         )}
 
-        {/* My Payouts Section - Only show if user holds the asset and has upcoming dividend */}
-        {holdings && holdings.shares > 0 && (holdings.next_ex_date || holdings.next_pay_date) && (
-          <View style={styles.payoutsContainer}>
-            <View style={styles.payoutsHeader}>
-              <Text style={styles.payoutsTitle}>My Payouts</Text>
-            </View>
-            
-            <View style={styles.payoutsRow}>
-              {(holdings.next_invest_by_date || holdings.next_ex_date) && (
-                <View style={styles.payoutCard}>
-                  <View style={styles.payoutIconContainer}>
-                    <Text style={styles.payoutIcon}>📅</Text>
-                  </View>
-                  <Text style={styles.payoutLabel}>Invest By</Text>
-                  <Text style={styles.payoutDate}>
-                    {holdingsLoading ? '...' : formatDateShort(holdings.next_invest_by_date || holdings.next_ex_date)}
-                  </Text>
-                </View>
-              )}
+        {/* Separator line between My Holdings and My Payouts */}
+        {holdings && holdings.shares > 0 && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (
+          <View style={styles.sectionDivider} />
+        )}
+
+        {/* My Payouts Section - Show if user holds the asset and has upcoming payment (even if ex-date has passed) */}
+        {holdings && holdings.shares > 0 && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (() => {
+          const investByDate = holdings.next_invest_by_date || holdings.next_ex_date;
+          const today = new Date().toISOString().split('T')[0];
+          const showInvestBy = investByDate && investByDate >= today;
+          const showPayday = holdings.next_pay_date_adjusted || holdings.next_pay_date;
+          
+          return (
+            <View style={styles.payoutsContainer}>
+              <View style={styles.payoutsHeader}>
+                <Text style={styles.payoutsTitle}>My Payouts</Text>
+              </View>
               
-              {(holdings.next_invest_by_date || holdings.next_ex_date) && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (
-                <View style={styles.payoutDivider} />
-              )}
-              
-              {(holdings.next_pay_date_adjusted || holdings.next_pay_date) && (
-                <View style={styles.payoutCard}>
-                  <View style={[styles.payoutIconContainer, styles.payoutIconContainerGreen]}>
-                    <Text style={styles.payoutIcon}>$</Text>
+              <View style={styles.payoutsRow}>
+                {/* Only show "Invest By" if ex-date/invest_by_date is still upcoming */}
+                {showInvestBy && (
+                  <View style={styles.payoutCard}>
+                    <View style={styles.payoutIconContainer}>
+                      <Ionicons name="calendar-outline" size={18} color={getColors(isDark).textPrimary} />
+                    </View>
+                    <Text style={styles.payoutLabel}>Invest By</Text>
+                    <Text style={styles.payoutDate}>
+                      {holdingsLoading ? '...' : formatDateShort(investByDate)}
+                    </Text>
                   </View>
-                  <Text style={styles.payoutLabel}>Payday</Text>
-                  <Text style={styles.payoutDate}>
-                    {holdingsLoading ? '...' : formatDateShort(holdings.next_pay_date_adjusted || holdings.next_pay_date)}
-                  </Text>
-                </View>
-              )}
+                )}
+                
+                {/* Show divider only if both cards are visible */}
+                {showInvestBy && showPayday && (
+                  <View style={styles.payoutDividerContainer}>
+                    <View style={styles.payoutDivider} />
+                  </View>
+                )}
+                
+                {/* Always show Payday if payment date exists and hasn't occurred */}
+                {showPayday && (
+                  <View style={styles.payoutCard}>
+                    <View style={[styles.payoutIconContainer, styles.payoutIconContainerGreen]}>
+                      <Text style={styles.payoutIcon}>$</Text>
+                    </View>
+                    <Text style={styles.payoutLabel}>Payday</Text>
+                    <Text style={styles.payoutDate}>
+                      {holdingsLoading ? '...' : formatDateShort(holdings.next_pay_date_adjusted || holdings.next_pay_date)}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
-          </View>
+          );
+        })()}
+
+        {/* Separator line between My Payouts and Details */}
+        {(navData?.current_nav !== null && navData?.current_nav !== undefined) && (
+          <View style={styles.sectionDivider} />
         )}
 
         {/* Details Section */}
@@ -1200,6 +1223,12 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     fontFamily: 'ChakraPetch-Bold',
     color: colors.textPrimary,
   },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+    marginHorizontal: 20,
+    marginBottom: 20,
+  },
   payoutsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1210,39 +1239,42 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     alignItems: 'center',
     justifyContent: 'center',
   },
+  payoutDividerContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 16,
+  },
   payoutIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: isDark ? colors.backgroundGrey : colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
   },
   payoutIconContainerGreen: {
-    backgroundColor: isDark ? 'rgba(76, 175, 80, 0.2)' : 'rgba(76, 175, 80, 0.15)',
+    backgroundColor: colors.green,
   },
   payoutIcon: {
-    fontSize: 24,
+    fontSize: 18,
   },
   payoutLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: 'Inter-Medium',
     color: colors.textSecondary,
-    marginBottom: 4,
+    marginBottom: 6,
   },
   payoutDate: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     fontFamily: 'ChakraPetch-Bold',
     color: colors.textPrimary,
   },
   payoutDivider: {
-    width: 1,
-    height: 60,
-    backgroundColor: colors.green,
-    marginHorizontal: 16,
-    opacity: 0.5,
+    width: 40,
+    height: 1,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)',
   },
   loadingContainer: {
     flex: 1,

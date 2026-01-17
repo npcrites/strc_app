@@ -23,7 +23,7 @@ from app.services.dashboard.queries.positions import _get_bucket_key
 from app.services.price_service import PriceService
 from app.services.market_hours_service import MarketHoursService
 from app.core.config import settings
-from sqlalchemy import and_, func
+from sqlalchemy import and_, or_, func
 import httpx
 import logging
 import pytz
@@ -2635,17 +2635,37 @@ async def get_asset_holdings(
         total_dividends = float(total_dividends_decimal)
         
         # Get next upcoming dividend (for ex-date and pay-date)
+        # Include dividends where ex-date has passed but payment date hasn't occurred yet
         next_dividend = None
         if position:
             today = date.today()
             
+            # Find dividends that are upcoming based on payment date, even if ex-date has passed
+            # This handles the case where ex-date is in the past but payment is still pending
             next_dividend = db.query(Dividend).filter(
                 Dividend.user_id == user_id,
                 Dividend.ticker == ticker_upper,
                 Dividend.status == DividendStatus.UPCOMING,
-                Dividend.ex_date.isnot(None),
-                Dividend.ex_date >= today
-            ).order_by(Dividend.ex_date.asc()).first()
+                or_(
+                    # Ex-date hasn't passed yet
+                    and_(
+                        Dividend.ex_date.isnot(None),
+                        Dividend.ex_date >= today
+                    ),
+                    # OR ex-date has passed but payment date hasn't occurred yet
+                    and_(
+                        Dividend.ex_date.isnot(None),
+                        Dividend.ex_date < today,
+                        or_(
+                            and_(Dividend.pay_date.isnot(None), Dividend.pay_date >= today),
+                            and_(Dividend.pay_date_adjusted.isnot(None), Dividend.pay_date_adjusted >= today)
+                        )
+                    )
+                )
+            ).order_by(
+                # Order by payment date (adjusted if available) to get the next payment
+                func.coalesce(Dividend.pay_date_adjusted, Dividend.pay_date, Dividend.ex_date).asc()
+            ).first()
         
         return HoldingsResponse(
             ticker=ticker_upper,
