@@ -1043,7 +1043,7 @@ function useChartDrag({
     // Get the snap point for tooltip and dot position
     // Use snapPointsRef.current to ensure we get the latest filtered snap points
     const snapPoint = snapPointsRef.current[snappedIndex];
-    if (!snapPoint) return;
+    if (!snapPoint || snapPoint.y === undefined) return;
     
     // Update current drag data for tooltip
     setCurrentDragData({
@@ -1109,7 +1109,7 @@ function useChartDrag({
         const { x: finalX, index: snappedIndex } = snapResult;
         // Use snapPointsRef.current to ensure we get the latest filtered snap points
         const snapPoint = snapPointsRef.current[snappedIndex];
-        if (!snapPoint) return;
+        if (!snapPoint || snapPoint.y === undefined) return;
         
         // Update current drag data for tooltip
         setCurrentDragData({
@@ -1193,7 +1193,7 @@ function useChartDrag({
     const { x: finalX, index: snappedIndex } = snapResult;
     // Use snapPointsRef.current to ensure we get the latest filtered snap points
     const snapPoint = snapPointsRef.current[snappedIndex];
-    if (!snapPoint) return;
+    if (!snapPoint || snapPoint.y === undefined) return;
     
     // Update current drag data for tooltip
     setCurrentDragData({
@@ -2506,8 +2506,8 @@ function Chart({
               dragXAnimated={dragXAnimated}
               dotYAnimated={dotYAnimated}
               height={height}
-              value={currentDragData.value}
-              timestamp={currentDragData.timestamp}
+              value={currentDragData?.value ?? 0}
+              timestamp={currentDragData?.timestamp ?? 0}
               tradingHoursMode={tradingHoursMode}
               colors={getColors(isDark)}
             />

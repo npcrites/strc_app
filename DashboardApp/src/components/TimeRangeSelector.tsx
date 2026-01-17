@@ -90,7 +90,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     // No background for inactive buttons
   },
   timeRangeButtonActive: {
-    backgroundColor: colors.textPrimary,
+    backgroundColor: isDark ? '#FFFFFF' : '#000000', // White in dark mode, black in light mode
     // 3D shadow effect
     shadowColor: '#000',
     shadowOffset: {
@@ -107,7 +107,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     fontWeight: '500',
   },
   timeRangeButtonTextActive: {
-    color: colors.backgroundWhite,
+    color: isDark ? '#000000' : '#FFFFFF', // Black in dark mode, white in light mode
     fontWeight: '600',
   },
 });

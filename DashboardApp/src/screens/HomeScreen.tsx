@@ -11,6 +11,7 @@ import {
   Dimensions,
   Animated,
   Modal,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +31,7 @@ import { filterDashboardByTimeRange } from '../utils/dashboardFilter';
 import MSTRSymbol from '../components/MSTRSymbol';
 import ASSTSymbol from '../components/ASSTSymbol';
 import { hasMSTRParent, hasASTTParent } from '../utils/assetUtils';
+import { Ionicons } from '@expo/vector-icons';
 
 type RootStackParamList = {
   AssetDetail: { ticker: string };
@@ -77,7 +79,7 @@ export default function HomeScreen() {
   const screenWidth = Dimensions.get('window').width;
   
   // Initialize styles early so they're available for early returns
-  const styles = useMemo(() => createStyles(getColors(isDark)), [isDark]);
+  const styles = useMemo(() => createStyles(getColors(isDark), isDark), [isDark]);
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,7 +90,12 @@ export default function HomeScreen() {
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const [assetNames, setAssetNames] = useState<Record<string, string>>({});
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [renderFilterDropdown, setRenderFilterDropdown] = useState(false);
   const modalOpacity = useRef(new Animated.Value(0)).current;
+  const filterDropdownRef = useRef<View>(null);
+  const dropdownOpacity = useRef(new Animated.Value(0)).current;
+  const dropdownTranslateY = useRef(new Animated.Value(-10)).current;
   
   // Store all data for client-side filtering (Coinbase-style)
   const allDataRef = useRef<DashboardSnapshot | null>(null);
@@ -189,6 +196,47 @@ export default function HomeScreen() {
       }).start();
     }
   }, [showLogoutModal]);
+
+  // Animate dropdown when visibility changes
+  useEffect(() => {
+    if (showFilterDropdown) {
+      // Start rendering the dropdown first
+      setRenderFilterDropdown(true);
+      // Reset animation values
+      dropdownOpacity.setValue(0);
+      dropdownTranslateY.setValue(-10);
+      // Then animate in: fade in and slide down
+      Animated.parallel([
+        Animated.timing(dropdownOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(dropdownTranslateY, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else if (renderFilterDropdown) {
+      // Close animation: fade out and slide up
+      Animated.parallel([
+        Animated.timing(dropdownOpacity, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(dropdownTranslateY, {
+          toValue: -10,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        // Remove from DOM after animation completes
+        setRenderFilterDropdown(false);
+      });
+    }
+  }, [showFilterDropdown, renderFilterDropdown, dropdownOpacity, dropdownTranslateY]);
 
   // Update portfolio value color animation when value changes
   useEffect(() => {
@@ -645,19 +693,21 @@ export default function HomeScreen() {
   return (
     <>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={getColors(isDark).backgroundWhite} />
-      <ScrollView 
-        style={styles.container} 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 20) + 80 }]}
-        bounces={true}
-        alwaysBounceVertical={true}
-        scrollEnabled={scrollEnabled}
-        nestedScrollEnabled={false}
-        scrollEventThrottle={16}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
+      <TouchableWithoutFeedback onPress={() => setShowFilterDropdown(false)}>
+        <ScrollView 
+          style={styles.container} 
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 20) + 80 }]}
+          bounces={true}
+          alwaysBounceVertical={true}
+          scrollEnabled={scrollEnabled}
+          nestedScrollEnabled={false}
+          scrollEventThrottle={16}
+          onScrollBeginDrag={() => setShowFilterDropdown(false)}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
             progressViewOffset={Math.max(insets.top, 20) + 40}
           />
         }
@@ -853,27 +903,91 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Content Filters - Total, Assets, Dividends */}
-      <View style={styles.filterContainer}>
-        {(['Total', 'Assets', 'Dividends'] as ContentFilter[]).map((filter) => (
-          <TouchableOpacity
-            key={filter}
-            style={[
-              styles.filterButton,
-              contentFilter === filter && styles.filterButtonActive,
-            ]}
-            onPress={() => setContentFilter(filter)}
+        {/* Filter and Time Range Selector Row */}
+      <View style={styles.filterTimeRangeRow}>
+        {/* Dropdown Filter Selector */}
+        <View ref={filterDropdownRef} style={styles.filterDropdownContainer}>
+          <TouchableOpacity 
+            style={styles.filterDropdown}
+            onPress={() => setShowFilterDropdown(!showFilterDropdown)}
+            activeOpacity={0.7}
           >
-            <Text
+            <Text style={styles.filterDropdownText}>
+              {contentFilter === 'Total' ? 'Total Value' : contentFilter === 'Assets' ? 'Assets' : 'Dividends'}
+            </Text>
+            <Ionicons 
+              name={showFilterDropdown ? "chevron-up" : "chevron-down"} 
+              size={16} 
+              color={getColors(isDark).textPrimary} 
+            />
+          </TouchableOpacity>
+          
+          {/* Dropdown Menu */}
+          {renderFilterDropdown && (
+            <Animated.View 
               style={[
-                styles.filterButtonText,
-                contentFilter === filter && styles.filterButtonTextActive,
+                styles.filterDropdownMenu,
+                {
+                  opacity: dropdownOpacity,
+                  transform: [{ translateY: dropdownTranslateY }],
+                },
               ]}
             >
-              {filter}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              {(['Total', 'Assets', 'Dividends'] as ContentFilter[]).map((filter) => (
+                <TouchableOpacity
+                  key={filter}
+                  style={[
+                    styles.filterDropdownItem,
+                    contentFilter === filter && styles.filterDropdownItemActive,
+                  ]}
+                  onPress={() => {
+                    setContentFilter(filter);
+                    setShowFilterDropdown(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  {contentFilter === filter && (
+                    <Ionicons 
+                      name="checkmark" 
+                      size={18} 
+                      color={getColors(isDark).textPrimary} 
+                      style={styles.filterDropdownCheckmark}
+                    />
+                  )}
+                  <Text style={[
+                    styles.filterDropdownItemText,
+                    contentFilter === filter && styles.filterDropdownItemTextActive,
+                  ]}>
+                    {filter === 'Total' ? 'Total Value' : filter}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </Animated.View>
+          )}
+        </View>
+
+        {/* Time Range Selector */}
+        <View style={styles.timeRangeContainer}>
+          {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
+            <TouchableOpacity
+              key={range}
+              style={[
+                styles.timeRangeButton,
+                timeRange === range && styles.timeRangeButtonActive,
+              ]}
+              onPress={() => setTimeRange(range)}
+            >
+              <Text
+                style={[
+                  styles.timeRangeButtonText,
+                  timeRange === range && styles.timeRangeButtonTextActive,
+                ]}
+              >
+                {range}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
       {/* Performance Chart */}
@@ -897,29 +1011,6 @@ export default function HomeScreen() {
             }}
           />
         </View>
-      </View>
-
-      {/* Time Range Selector */}
-      <View style={styles.timeRangeContainer}>
-        {(['1W', '1M', '3M', '1Y', 'ALL'] as TimeRange[]).map((range) => (
-          <TouchableOpacity
-            key={range}
-            style={[
-              styles.timeRangeButton,
-              timeRange === range && styles.timeRangeButtonActive,
-            ]}
-            onPress={() => setTimeRange(range)}
-          >
-            <Text
-              style={[
-                styles.timeRangeButtonText,
-                timeRange === range && styles.timeRangeButtonTextActive,
-              ]}
-            >
-              {range}
-            </Text>
-          </TouchableOpacity>
-        ))}
       </View>
 
       {/* Portfolio Breakdown Section */}
@@ -1013,7 +1104,8 @@ export default function HomeScreen() {
           );
         })}
       </View>
-      </ScrollView>
+        </ScrollView>
+      </TouchableWithoutFeedback>
 
       {/* Logout Modal */}
       <Modal
@@ -1043,7 +1135,7 @@ export default function HomeScreen() {
   );
 }
 
-const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create({
+const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -1234,32 +1326,121 @@ const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create
     fontWeight: '600',
     fontFamily: 'Inter-SemiBold',
   },
+  filterTimeRangeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginTop: 0,
+    marginBottom: 16,
+  },
+  filterDropdownContainer: {
+    position: 'relative',
+    zIndex: 1000,
+  },
+  filterDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: isDark 
+      ? ((colors as any).glassBackground || 'rgba(70, 64, 56, 0.3)')
+      : 'rgba(255, 255, 255, 0.95)',
+    borderWidth: isDark ? 1 : 0,
+    borderColor: isDark ? ((colors as any).glassBorder || 'rgba(70, 64, 56, 0.5)') : 'transparent',
+    shadowColor: isDark ? ((colors as any).glassShadowGlow || '#CC6A1F') : '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: isDark ? 0.04 : 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+    gap: 8,
+  },
+  filterDropdownText: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: colors.textPrimary,
+    fontWeight: '500',
+  },
+  filterDropdownMenu: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    marginTop: 4,
+    minWidth: 180,
+    borderRadius: 12,
+    backgroundColor: isDark 
+      ? ((colors as any).glassBackground || 'rgba(70, 64, 56, 0.95)')
+      : 'rgba(255, 255, 255, 0.98)',
+    borderWidth: 1,
+    borderColor: isDark 
+      ? ((colors as any).glassBorder || 'rgba(70, 64, 56, 0.5)')
+      : 'rgba(0, 0, 0, 0.1)',
+    shadowColor: isDark ? ((colors as any).glassShadowGlow || '#CC6A1F') : '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: isDark ? 0.1 : 0.2,
+    shadowRadius: 12,
+    elevation: 8,
+    overflow: 'hidden',
+  },
+  filterDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 44,
+  },
+  filterDropdownItemActive: {
+    backgroundColor: isDark 
+      ? 'rgba(255, 255, 255, 0.1)'
+      : 'rgba(0, 0, 0, 0.05)',
+  },
+  filterDropdownCheckmark: {
+    marginRight: 12,
+  },
+  filterDropdownItemText: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  filterDropdownItemTextActive: {
+    fontFamily: 'Inter-SemiBold',
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
   timeRangeContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    marginTop: 8,
-    marginBottom: 24,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
     gap: 8,
   },
   timeRangeButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: colors.backgroundGrey,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
   timeRangeButtonActive: {
-    backgroundColor: colors.backgroundGrey,
+    backgroundColor: isDark ? '#FFFFFF' : '#000000', // White in dark mode, black in light mode
+    // 3D shadow effect
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8, // Android shadow for 3D effect
   },
   timeRangeButtonText: {
-    fontSize: 14,
+    fontSize: 12,
     fontFamily: 'Inter-Medium',
     color: colors.textSecondary,
     fontWeight: '500',
   },
   timeRangeButtonTextActive: {
     fontFamily: 'Inter-SemiBold',
-    color: colors.textPrimary,
+    color: isDark ? '#000000' : '#FFFFFF', // Black in dark mode, white in light mode
     fontWeight: '600',
   },
   chartWrapper: {

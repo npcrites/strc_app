@@ -13,6 +13,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { dashboardApi } from '../services/dashboard';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { DashboardSnapshot, ActivityItem, ActivityType } from '../types';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { getColors } from '../constants/colors';
@@ -20,8 +22,15 @@ import MSTRSymbol from '../components/MSTRSymbol';
 import ASSTSymbol from '../components/ASSTSymbol';
 import { hasMSTRParent, hasASTTParent } from '../utils/assetUtils';
 
+type RootStackParamList = {
+  Settings: undefined;
+};
+
+type ActivityScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
 export default function ActivityScreen() {
-  const { token, loading: authLoading, logout } = useAuth();
+  const navigation = useNavigation<ActivityScreenNavigationProp>();
+  const { token, loading: authLoading, logout, user } = useAuth();
   const { isDark } = useTheme();
   const Colors = getColors(isDark);
   const insets = useSafeAreaInsets();
@@ -135,6 +144,17 @@ export default function ActivityScreen() {
     }
   };
 
+  // Get first letter of user's name
+  const getInitial = (): string => {
+    if (user?.full_name) {
+      return user.full_name.trim().charAt(0).toUpperCase();
+    }
+    if (user?.email) {
+      return user.email.trim().charAt(0).toUpperCase();
+    }
+    return '?';
+  };
+
   const formatExDate = (dateString?: string) => {
     if (!dateString) return '';
     const date = new Date(dateString);
@@ -175,12 +195,18 @@ export default function ActivityScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) + 80 }}
       >
-        <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) + 20 }]}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 20) + 40 }]}>
+          {/* Profile Icon - Positioned absolutely */}
+          <TouchableOpacity 
+            onPress={() => navigation.navigate('Settings')} 
+            style={[styles.profileIcon, { top: Math.max(insets.top, 20) + 40, right: 20 }]}
+          >
+            <Text style={styles.profileIconText}>{getInitial()}</Text>
+          </TouchableOpacity>
           <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Activity</Text>
-            <TouchableOpacity onPress={logout} style={styles.logoutButton}>
-              <Text style={styles.logoutButtonText}>Logout</Text>
-            </TouchableOpacity>
+            <View style={styles.headerTitleContainer}>
+              <Text style={styles.headerTitle}>Activity</Text>
+            </View>
           </View>
         </View>
 
@@ -374,11 +400,14 @@ const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create
   header: {
     paddingHorizontal: 20,
     paddingBottom: 16,
+    position: 'relative',
   },
   headerContent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  headerTitleContainer: {
+    flex: 1,
   },
   headerTitle: {
     fontSize: 28,
@@ -395,6 +424,21 @@ const createStyles = (colors: ReturnType<typeof getColors>) => StyleSheet.create
     fontSize: 14,
     fontWeight: '600',
     color: colors.textPrimary,
+  },
+  profileIcon: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.textPrimary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  profileIconText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.backgroundWhite,
   },
   section: {
     paddingHorizontal: 20,

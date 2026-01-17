@@ -35,6 +35,7 @@ import { TradingHoursMode } from '../utils/marketHours';
 type RootStackParamList = {
   AssetDetail: { ticker: string };
   PayoutsDetail: { ticker: string };
+  HoldingsDetail: { ticker: string };
 };
 
 type AssetDetailRouteProp = RouteProp<RootStackParamList, 'AssetDetail'>;
@@ -818,7 +819,14 @@ export default function AssetDetailScreen() {
         {/* My Holdings Section - Show if user holds the asset OR has pending payout */}
         {holdings && (holdings.shares > 0 || (holdings.next_pay_date_adjusted || holdings.next_pay_date)) && (
           <View style={styles.holdingsContainer}>
-            <Text style={styles.holdingsTitle}>My Holdings</Text>
+            <TouchableOpacity 
+              style={styles.holdingsHeader}
+              onPress={() => navigation.navigate('HoldingsDetail', { ticker })}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.holdingsTitle}>My Holdings</Text>
+              <Ionicons name="chevron-forward" size={20} color={getColors(isDark).textSecondary} />
+            </TouchableOpacity>
             
             <View style={styles.holdingsRow}>
               <View style={styles.holdingsLeft}>
@@ -1218,12 +1226,17 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     paddingHorizontal: 20,
     marginBottom: 20,
   },
+  holdingsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   holdingsTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     fontFamily: 'ChakraPetch-Bold',
     color: colors.textPrimary,
-    marginBottom: 16,
   },
   holdingsRow: {
     flexDirection: 'row',
