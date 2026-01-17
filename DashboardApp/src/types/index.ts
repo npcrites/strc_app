@@ -58,10 +58,15 @@ export interface Position {
   id: number;
   ticker: string;
   name?: string;
+  parent_ticker?: string;  // Parent company ticker (e.g., "MSTR" for "MSTR-A", undefined for standalone assets)
   shares: number;
   cost_basis: number;
   market_value?: number;
   asset_type?: string;
+  average_cost_per_share?: number;
+  current_price_per_share?: number;
+  unrealized_gain_loss?: number;
+  unrealized_gain_loss_percent?: number;
 }
 
 export enum ActivityType {
@@ -81,5 +86,24 @@ export interface ActivityItem {
   dividend_amount: number;
   ex_date?: string;
   ticker?: string;
+}
+
+export interface MetricPoint {
+  timestamp: string;
+  value: number;
+}
+
+export interface ParentNAVHistory {
+  parent_ticker: string;
+  current_nav: number | null;
+  granularity: string;
+  series: MetricPoint[];
+}
+
+export interface Holdings {
+  ticker: string;
+  position_amount: number;
+  shares: number;
+  total_dividends: number;
 }
 

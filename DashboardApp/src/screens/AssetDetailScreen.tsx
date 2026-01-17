@@ -8,11 +8,13 @@ import {
   ActivityIndicator,
   StatusBar,
   Animated,
+  Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import AnimatedNumbers from 'react-native-animated-numbers';
+import ViewShot from 'react-native-view-shot';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { api } from '../services/api';
@@ -21,6 +23,8 @@ import { getColors } from '../constants/colors';
 import AssetChart from '../components/AssetChart';
 import TimeRangeSelector, { TimeRange } from '../components/TimeRangeSelector';
 import BackButton from '../components/BackButton';
+import ExportButton from '../components/ExportButton';
+import { ParentNAVHistory, Position, Holdings } from '../types';
 import { fetchAssetPriceHistory, transformToChartData, invalidateChartCache } from '../services/chartData';
 import { TradingHoursMode } from '../utils/marketHours';
 
@@ -68,6 +72,12 @@ export default function AssetDetailScreen() {
   const [timeRange, setTimeRange] = useState<TimeRange>('1Y');
   const [tradingHoursMode, setTradingHoursMode] = useState<TradingHoursMode>('market');
   const [error, setError] = useState<string | null>(null);
+  const [navData, setNavData] = useState<ParentNAVHistory | null>(null);
+  const [navLoading, setNavLoading] = useState(false);
+  const [position, setPosition] = useState<Position | null>(null);
+  const [positionLoading, setPositionLoading] = useState(false);
+  const [holdings, setHoldings] = useState<Holdings | null>(null);
+  const [holdingsLoading, setHoldingsLoading] = useState(false);
 
   // Ensure header is never shown (prevents default back arrow from appearing)
   useLayoutEffect(() => {
@@ -91,6 +101,7 @@ export default function AssetDetailScreen() {
   const colorOpacityAnim = useRef(new Animated.Value(0)).current;
   const fadeOutTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [priceColor, setPriceColor] = useState<string>(getColors(isDark).textPrimary);
+  const chartViewShotRef = useRef<ViewShot>(null);
 
   const timeRangeMap: Record<TimeRange, string> = {
     '1W': '1W',
@@ -149,6 +160,81 @@ export default function AssetDetailScreen() {
 
     fetchData();
   }, [token, ticker, timeRange, tradingHoursMode]);
+
+  // Fetch position data to determine if user holds this asset
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchPosition = async () => {
+      try {
+        setPositionLoading(true);
+        const response = await api.get<{ positions: Position[] }>('/positions/', token);
+        
+        // Find position matching current ticker (case-insensitive)
+        const matchingPosition = response.positions.find(
+          pos => pos.ticker?.toUpperCase() === ticker.toUpperCase()
+        );
+        
+        setPosition(matchingPosition || null);
+      } catch (err: any) {
+        console.error('Error fetching position:', err);
+        // Don't set error state - just silently fail if position fetch fails
+        setPosition(null);
+      } finally {
+        setPositionLoading(false);
+      }
+    };
+
+    fetchPosition();
+  }, [token, ticker]);
+
+  // Fetch NAV data for details section (only fetch once, not on timeRange changes)
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchNAV = async () => {
+      try {
+        setNavLoading(true);
+        // Use a fixed time range (e.g., 1Y) or just get latest - details section shows current value
+        const response = await api.get<ParentNAVHistory>(
+          `/assets/${ticker}/parent-nav?time_range=1Y`,
+          token
+        );
+        setNavData(response);
+      } catch (err: any) {
+        console.error('Error fetching parent NAV:', err);
+        // Don't set error state - just silently fail if NAV is not available
+      } finally {
+        setNavLoading(false);
+      }
+    };
+
+    fetchNAV();
+  }, [token, ticker]); // Removed timeRange from dependencies
+
+  // Fetch holdings data (position amount and total dividends)
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchHoldings = async () => {
+      try {
+        setHoldingsLoading(true);
+        const response = await api.get<Holdings>(
+          `/assets/${ticker}/holdings`,
+          token
+        );
+        setHoldings(response);
+      } catch (err: any) {
+        console.error('Error fetching holdings:', err);
+        // Don't set error state - just silently fail if holdings are not available
+        setHoldings(null);
+      } finally {
+        setHoldingsLoading(false);
+      }
+    };
+
+    fetchHoldings();
+  }, [token, ticker]);
 
   // Convert price history to chart format using optimized transformation
   // Uses efficient single-pass transformation for better performance
@@ -309,6 +395,109 @@ export default function AssetDetailScreen() {
     };
   }, [currentPrice, colorOpacityAnim, leftmostChangePosition, isIncrease, data]);
 
+  // Share handler - defined early so it can be used in early returns
+  const handleShare = async () => {
+    if (!data || !token) return;
+    
+    // Calculate price change for share message
+    const previousPrice = data.series.length > 1 ? data.series[data.series.length - 2].price : currentPrice;
+    const priceChange = currentPrice - previousPrice;
+    const priceChangePercent = previousPrice !== 0 ? (priceChange / previousPrice) * 100 : 0;
+    const isPositive = priceChange >= 0;
+    
+    const priceText = formatCurrency(currentPrice);
+    const changeText = `${isPositive ? '+' : ''}${formatCurrency(priceChange)} (${isPositive ? '+' : ''}${priceChangePercent.toFixed(2)}%)`;
+    const assetName = data?.name || ticker;
+    
+    try {
+      // Capture the chart as an image
+      let imageUri: string | undefined;
+      if (chartViewShotRef.current && chartViewShotRef.current.capture) {
+        try {
+          imageUri = await chartViewShotRef.current.capture();
+        } catch (captureError) {
+          console.warn('Failed to capture chart image:', captureError);
+          // Fall back to text-only share
+          const message = `${assetName} (${ticker})\n${priceText}\n${changeText}`;
+          await Share.share({
+            message: message,
+            title: `${ticker} Price`,
+          });
+          return;
+        }
+      }
+      
+      if (!imageUri) {
+        // Fall back to text-only share
+        const message = `${assetName} (${ticker})\n${priceText}\n${changeText}`;
+        await Share.share({
+          message: message,
+          title: `${ticker} Price`,
+        });
+        return;
+      }
+      
+      // Upload image to backend
+      const formData = new FormData();
+      formData.append('image', {
+        uri: imageUri,
+        type: 'image/png',
+        name: `${ticker}-chart.png`,
+      } as any);
+      formData.append('ticker', ticker);
+      
+      const uploadResponse = await fetch(`${api.baseUrl}/assets/share-image`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        },
+        body: formData,
+      });
+      
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        console.error('Failed to upload image:', errorText);
+        // Fall back to sharing image directly
+        await Share.share({
+          message: `${assetName} (${ticker})\n${priceText}\n${changeText}`,
+          url: imageUri,
+          title: `${ticker} Price`,
+        });
+        return;
+      }
+      
+      const { shareUrl } = await uploadResponse.json();
+      
+      // Share the URL - this will show as a rich preview in iMessage
+      // The URL contains Universal Link metadata that opens the app
+      const message = `${assetName} (${ticker})\n${priceText}\n${changeText}`;
+      const result = await Share.share({
+        message: message,
+        url: shareUrl, // This URL will be clickable and show image preview
+        title: `${ticker} Price`,
+      });
+      
+      if (result.action === Share.sharedAction) {
+        console.log('Shared successfully');
+      } else if (result.action === Share.dismissedAction) {
+        console.log('Share dismissed');
+      }
+    } catch (error) {
+      console.error('Error sharing:', error);
+      // Fall back to text-only share on error
+      try {
+        const message = `${assetName} (${ticker})\n${priceText}\n${changeText}`;
+        await Share.share({
+          message: message,
+          title: `${ticker} Price`,
+        });
+      } catch (fallbackError) {
+        console.error('Fallback share also failed:', fallbackError);
+      }
+    }
+  };
+
   // Only show loading spinner on initial load (when we have no data at all)
   // For timeframe/mode changes, we preserve old data and show animation instead
   if (loading && !data && !previousDataRef.current) {
@@ -317,6 +506,7 @@ export default function AssetDetailScreen() {
         <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
         <View style={styles.topBar}>
           <BackButton onPress={() => navigation.goBack()} />
+          <ExportButton onPress={handleShare} />
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={getColors(isDark).orange} />
@@ -332,6 +522,7 @@ export default function AssetDetailScreen() {
         <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
         <View style={styles.topBar}>
           <BackButton onPress={() => navigation.goBack()} />
+          <ExportButton onPress={handleShare} />
         </View>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
@@ -355,6 +546,7 @@ export default function AssetDetailScreen() {
         <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
         <View style={styles.topBar}>
           <BackButton onPress={() => navigation.goBack()} />
+          <ExportButton onPress={handleShare} />
         </View>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>No data available</Text>
@@ -376,13 +568,21 @@ export default function AssetDetailScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Back Button - Outside Card */}
+        {/* Top Bar - Back Button and Export Button */}
         <View style={styles.topBar}>
           <BackButton onPress={() => navigation.goBack()} />
+          <ExportButton onPress={handleShare} />
         </View>
 
         {/* Main Card - Contains Header and Chart */}
-        <View style={styles.mainCard}>
+        <ViewShot
+          ref={chartViewShotRef}
+          style={styles.mainCard}
+          options={{
+            format: 'png',
+            quality: 0.9,
+          }}
+        >
           {/* Header Content */}
           <View style={styles.header}>
             <Text style={styles.assetName}>{data?.name || ticker}</Text>
@@ -588,13 +788,49 @@ export default function AssetDetailScreen() {
             tradingHoursMode={tradingHoursMode}
             isPositive={isPositive}
           />
-        </View>
+        </ViewShot>
 
         {/* Time Range Selector - Outside Card */}
         <TimeRangeSelector
           value={timeRange}
           onChange={setTimeRange}
         />
+
+        {/* My Holdings Section - Only show if user holds the asset */}
+        {holdings && holdings.shares > 0 && (
+          <View style={styles.holdingsContainer}>
+            <Text style={styles.holdingsTitle}>My Holdings</Text>
+            
+            <View style={styles.holdingsRow}>
+              <View style={styles.holdingsLeft}>
+                <Text style={styles.holdingsLabel}>Amount Held</Text>
+                <Text style={styles.holdingsAmount}>
+                  {holdingsLoading ? '...' : formatCurrency(holdings.position_amount)}
+                </Text>
+              </View>
+              
+              <View style={styles.holdingsRight}>
+                <Text style={styles.holdingsLabel}>Dividends Earned</Text>
+                <Text style={styles.holdingsDividends}>
+                  {holdingsLoading ? '...' : formatCurrency(holdings.total_dividends)}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Details Section */}
+        {(navData?.current_nav !== null && navData?.current_nav !== undefined) && (
+          <View style={styles.detailsContainer}>
+            <Text style={styles.detailsSectionTitle}>Details</Text>
+              <View style={styles.detailsRow}>
+                <Text style={styles.detailsLabel}>mNAV ({navData.parent_ticker})</Text>
+                <Text style={styles.detailsValue}>
+                  {navLoading ? '...' : (navData.current_nav !== null && navData.current_nav !== undefined) ? navData.current_nav.toFixed(4) : '0.0000'}
+                </Text>
+              </View>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -615,6 +851,9 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   mainCard: {
     backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : 'rgba(255, 255, 255, 0.95)', // Semi-transparent white in light mode
@@ -804,7 +1043,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     backgroundColor: colors.textPrimary, // Black pill
   },
   rthEthButtonText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '500',
     fontFamily: 'Inter-Medium',
     color: colors.textSecondary, // Lighter grey for inactive
@@ -812,6 +1051,99 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
   rthEthButtonTextActive: {
     fontFamily: 'Inter-Medium',
     color: colors.backgroundWhite, // White text when active
+  },
+  detailsContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  detailsSection: {
+    backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 16,
+    padding: 20,
+    // Glass-like border (only in dark mode)
+    borderWidth: isDark ? 1 : 0,
+    borderColor: isDark ? ((colors as any).glassBorder || 'rgba(70, 64, 56, 0.5)') : 'transparent',
+    // Soft shadow with orange glow (only in dark mode)
+    shadowColor: isDark ? ((colors as any).glassShadowGlow || '#CC6A1F') : '#000',
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: isDark ? 0.04 : 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  detailsSectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
+    marginBottom: 16,
+  },
+  detailsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  detailsLabel: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+  },
+  detailsValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: 'Inter-SemiBold',
+    color: colors.textPrimary,
+  },
+  positionValuePositive: {
+    color: isDark ? '#4CAF50' : '#2E7D32',
+  },
+  positionValueNegative: {
+    color: isDark ? '#F44336' : '#C62828',
+  },
+  holdingsContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  holdingsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
+    marginBottom: 16,
+  },
+  holdingsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  holdingsLeft: {
+    flex: 1,
+  },
+  holdingsAmount: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  holdingsRight: {
+    alignItems: 'flex-end',
+  },
+  holdingsLabel: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
+  holdingsDividends: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.green,
+    marginBottom: 4,
   },
   loadingContainer: {
     flex: 1,

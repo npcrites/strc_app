@@ -919,9 +919,9 @@ export default function HomeScreen() {
         ))}
       </View>
 
-      {/* By Asset Section */}
+      {/* Portfolio Breakdown Section */}
       <View style={styles.assetSection}>
-        <Text style={styles.assetSectionTitle}>By Asset</Text>
+        <Text style={styles.assetSectionTitle}>My Allocations</Text>
         
         {/* Allocation Bar */}
         <View style={styles.allocationBar}>

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Linking } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Font from 'expo-font';
@@ -13,6 +14,7 @@ const Stack = createNativeStackNavigator();
 
 function AppNavigator() {
   const { isAuthenticated, loading, logout } = useAuth();
+  const navigationRef = React.useRef<any>(null);
 
   // Listen for 401 errors globally
   useEffect(() => {
@@ -31,12 +33,76 @@ function AppNavigator() {
     };
   }, [logout]);
 
+  // Handle deep links for asset sharing
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const handleDeepLink = (url: string) => {
+      // Parse deep link: strctracker://asset/{ticker}
+      const match = url.match(/strctracker:\/\/asset\/([^\/\?]+)/);
+      if (match && match[1] && navigationRef.current) {
+        const ticker = match[1];
+        // Navigate to AssetDetail screen
+        navigationRef.current.navigate('AssetDetail', { ticker });
+      }
+    };
+
+    // Handle initial URL (app opened via deep link)
+    if (Linking && Linking.getInitialURL) {
+      Linking.getInitialURL()
+        .then((url) => {
+          if (url) {
+            handleDeepLink(url);
+          }
+        })
+        .catch((error) => {
+          console.warn('Error getting initial URL:', error);
+        });
+    }
+
+    // Listen for deep links while app is running
+    let subscription: any = null;
+    if (Linking && Linking.addEventListener) {
+      subscription = Linking.addEventListener('url', (event) => {
+        handleDeepLink(event.url);
+      });
+    }
+
+    return () => {
+      if (subscription && subscription.remove) {
+        subscription.remove();
+      }
+    };
+  }, [isAuthenticated]);
+
+  // Configure deep linking
+  const linking = {
+    prefixes: ['strctracker://'],
+    config: {
+      screens: {
+        Main: {
+          screens: {
+            Home: 'home',
+            Activity: 'activity',
+          },
+        },
+        AssetDetail: {
+          path: 'asset/:ticker',
+          parse: {
+            ticker: (ticker: string) => ticker,
+          },
+        },
+        Settings: 'settings',
+      },
+    },
+  };
+
   if (loading) {
     return null; // Or a loading screen
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef} linking={linking}>
       <Stack.Navigator 
         screenOptions={{ 
           headerShown: false,

@@ -1,9 +1,10 @@
 """
 Assets API endpoints for price history
 """
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, FileResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime, timedelta, time, date
 from pydantic import BaseModel
 
@@ -13,6 +14,7 @@ from app.models.position_snapshot import PositionSnapshot
 from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.models.asset_price import AssetPrice
 from app.models.position import Position
+from app.models.dividend import Dividend, DividendStatus
 from app.models.user import User
 from app.services.position_sync_service import condense_company_name
 from app.services.alpaca_trading_service import AlpacaTradingService
@@ -25,6 +27,9 @@ from sqlalchemy import and_, func
 import httpx
 import logging
 import pytz
+import uuid
+import os
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +43,12 @@ class PricePoint(BaseModel):
     value: Optional[float] = None  # Total position value at this time
 
 
+class MetricPoint(BaseModel):
+    """Single metric data point (for NAV, volume, etc.)"""
+    timestamp: datetime
+    value: float
+
+
 class AssetPriceHistory(BaseModel):
     """Asset price history response"""
     ticker: str
@@ -45,6 +56,24 @@ class AssetPriceHistory(BaseModel):
     current_price: Optional[float]
     granularity: str
     series: List[PricePoint]
+
+
+class ParentNAVHistory(BaseModel):
+    """Parent company NAV history response"""
+    parent_ticker: str  # e.g., "MSTR"
+    current_nav: Optional[float]  # Current NAV value
+    granularity: str
+    series: List[MetricPoint]  # Historical NAV series
+    # Additional fields from mnav/latest endpoint
+    mnav_data: Optional[Dict] = None  # All data from /api/v1/mnav/latest endpoint
+
+
+class HoldingsResponse(BaseModel):
+    """Holdings data for a specific asset"""
+    ticker: str
+    position_amount: float  # Total value of position (shares * current_price)
+    shares: float  # Number of shares held
+    total_dividends: float  # Sum of all dividends paid for this ticker
 
 
 def _normalize_snapshots_per_day(
@@ -2435,4 +2464,363 @@ async def get_asset_price_history(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching asset price history: {str(e)}"
         )
+
+
+@router.get("/{ticker}/parent-nav", response_model=ParentNAVHistory)
+async def get_parent_nav_history(
+    ticker: str,
+    time_range: str = Query("1M", regex="^(1W|1M|3M|1Y|ALL)$", description="Time range: 1W, 1M, 3M, 1Y, or ALL"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Get NAV history for the parent company of the given ticker.
+    
+    Args:
+        ticker: Asset ticker (e.g., "STRC") - will look up parent (MSTR)
+        time_range: Time range shorthand (1W, 1M, 3M, 1Y, ALL)
+        db: Database session
+        user: Authenticated user from JWT
+    
+    Returns:
+        ParentNAVHistory with NAV series for parent company
+    """
+    try:
+        from app.core.utils import get_parent_ticker
+        from app.models.asset_metrics import AssetMetrics
+        from app.services.dashboard.models.time_range import TimeRange
+        from app.services.nav_service import fetch_mnav_latest
+        
+        user_id = int(user.get("user_id"))
+        ticker_upper = ticker.upper()
+        
+        # Get parent ticker
+        parent_ticker = get_parent_ticker(ticker_upper)
+        if not parent_ticker:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No parent company found for ticker {ticker}"
+            )
+        
+        # Try to fetch from /api/v1/companies/:symbol/latest endpoint first
+        from app.services.nav_service import fetch_company_latest
+        mnav_data = fetch_company_latest(parent_ticker)
+        
+        # Extract current_nav from mnav_data if available
+        current_nav_from_api = None
+        if mnav_data:
+            # Try different possible field names for NAV
+            current_nav_from_api = (
+                mnav_data.get("mNav") or 
+                mnav_data.get("mnav") or 
+                mnav_data.get("nav") or
+                mnav_data.get("current_nav") or
+                mnav_data.get("value")
+            )
+            if current_nav_from_api is not None:
+                try:
+                    current_nav_from_api = float(current_nav_from_api)
+                except (ValueError, TypeError):
+                    current_nav_from_api = None
+        
+        # Convert time range
+        tr = TimeRange.from_shorthand(time_range)
+        
+        # Query NAV metrics for parent company
+        query = db.query(AssetMetrics).filter(
+            AssetMetrics.ticker == parent_ticker,
+            AssetMetrics.metric_type == "nav",
+            AssetMetrics.is_parent_level == True
+        )
+        
+        if tr.start_date:
+            query = query.filter(AssetMetrics.timestamp >= tr.start_date)
+        query = query.filter(AssetMetrics.timestamp <= tr.end_date)
+        
+        metrics = query.order_by(AssetMetrics.timestamp.asc()).all()
+        
+        # Build series
+        series = [
+            MetricPoint(timestamp=m.timestamp, value=float(m.value))
+            for m in metrics
+        ]
+        
+        # Get current NAV (prefer from API, fallback to most recent from DB)
+        current_nav = current_nav_from_api
+        if current_nav is None and metrics:
+            current_nav = float(metrics[-1].value)
+        
+        return ParentNAVHistory(
+            parent_ticker=parent_ticker,
+            current_nav=current_nav,
+            granularity="daily",  # NAV is typically daily
+            series=series,
+            mnav_data=mnav_data  # Include all data from mnav/latest endpoint
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching parent NAV history: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching parent NAV history: {str(e)}"
+        )
+
+
+@router.get("/{ticker}/holdings", response_model=HoldingsResponse)
+async def get_asset_holdings(
+    ticker: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Get holdings data for a specific asset including position amount and total dividends.
+    
+    Args:
+        ticker: Stock ticker symbol (e.g., "STRC", "AAPL")
+        db: Database session
+        user: Authenticated user from JWT
+    
+    Returns:
+        HoldingsResponse with position_amount, shares, and total_dividends
+    """
+    try:
+        from decimal import Decimal
+        
+        user_id = int(user.get("user_id"))
+        ticker_upper = ticker.upper()
+        
+        # Get position for this ticker and user
+        position = db.query(Position).filter(
+            Position.user_id == user_id,
+            Position.ticker == ticker_upper,
+            Position.shares > 0
+        ).first()
+        
+        # Calculate position amount (market_value if available, otherwise shares * current_price)
+        position_amount = 0.0
+        shares = 0.0
+        
+        if position:
+            shares = float(position.shares)
+            
+            # If market_value is available, use it
+            if position.market_value is not None:
+                position_amount = float(position.market_value)
+            else:
+                # Fallback: calculate from current price
+                price_service = PriceService()
+                symbols = [ticker_upper]
+                prices = price_service.get_prices(db, symbols)
+                price = prices.get(ticker_upper)
+                
+                if price is not None:
+                    position_amount = shares * float(price)
+                else:
+                    # If no price available, set to 0
+                    position_amount = 0.0
+        
+        # Get total dividends paid for this ticker (all time)
+        total_dividends_query = db.query(func.coalesce(func.sum(Dividend.amount), 0)).filter(
+            Dividend.user_id == user_id,
+            Dividend.ticker == ticker_upper,
+            Dividend.status == DividendStatus.PAID
+        )
+        total_dividends_decimal = total_dividends_query.scalar() or Decimal('0.00')
+        total_dividends = float(total_dividends_decimal)
+        
+        return HoldingsResponse(
+            ticker=ticker_upper,
+            position_amount=position_amount,
+            shares=shares,
+            total_dividends=total_dividends
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching holdings for {ticker}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching holdings: {str(e)}"
+        )
+
+
+# Share image endpoints
+UPLOAD_DIR = Path(settings.SHARE_IMAGE_UPLOAD_DIR)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@router.post("/share-image")
+async def upload_share_image(
+    image: UploadFile = File(...),
+    ticker: str = Form(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Upload a chart image for sharing.
+    Returns a shareable URL that will open the app via Universal Links.
+    """
+    try:
+        # Generate unique file ID
+        file_id = str(uuid.uuid4())
+        file_ext = image.filename.split('.')[-1] if '.' in image.filename else 'png'
+        filename = f"{file_id}.{file_ext}"
+        file_path = UPLOAD_DIR / filename
+        
+        # Save the image
+        with open(file_path, "wb") as buffer:
+            content = await image.read()
+            buffer.write(content)
+        
+        # Return shareable URL
+        base_url = settings.SHARE_IMAGE_BASE_URL.rstrip('/')
+        share_url = f"{base_url}/api/assets/share/asset/{ticker}?id={file_id}"
+        
+        return {
+            "shareUrl": share_url,
+            "fileId": file_id
+        }
+    except Exception as e:
+        logger.error(f"Error uploading share image: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading image: {str(e)}"
+        )
+
+
+@router.get("/share/asset/{ticker}", response_class=HTMLResponse)
+async def share_asset_page(ticker: str, id: Optional[str] = Query(None)):
+    """
+    Share page that displays the chart image and includes Universal Link metadata.
+    When clicked in iMessage, this will open the app via deep link.
+    """
+    # Find the image file
+    image_path = None
+    image_url = None
+    
+    if id:
+        for file in UPLOAD_DIR.glob(f"{id}.*"):
+            if file.exists():
+                image_path = file
+                base_url = settings.SHARE_IMAGE_BASE_URL.rstrip('/')
+                image_url = f"{base_url}/api/assets/share-image/{file.name}"
+                break
+    
+    # HTML page with image and Universal Link metadata
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{ticker} Price Chart</title>
+        
+        <!-- Open Graph / Facebook / iMessage Rich Preview -->
+        <meta property="og:type" content="website">
+        <meta property="og:title" content="{ticker} Price Chart">
+        <meta property="og:description" content="View {ticker} price chart in STRC Tracker">
+        {f'<meta property="og:image" content="{image_url}">' if image_url else ''}
+        <meta property="og:url" content="{settings.SHARE_IMAGE_BASE_URL}/api/assets/share/asset/{ticker}">
+        
+        <!-- Twitter Card -->
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:title" content="{ticker} Price Chart">
+        {f'<meta name="twitter:image" content="{image_url}">' if image_url else ''}
+        
+        <!-- Apple Universal Links - Smart App Banner -->
+        <meta name="apple-itunes-app" content="app-id=YOUR_APP_ID">
+        
+        <!-- Auto-redirect to app if installed -->
+        <script>
+            // Try to open app via deep link
+            window.location = "strctracker://asset/{ticker}";
+            
+            // Fallback: show page content after 500ms if app didn't open
+            setTimeout(function() {{
+                document.getElementById('fallback').style.display = 'block';
+            }}, 500);
+        </script>
+        
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: #f5f5f5;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+            }}
+            .container {{
+                background: white;
+                border-radius: 16px;
+                padding: 24px;
+                max-width: 600px;
+                width: 100%;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                text-align: center;
+            }}
+            h1 {{
+                margin: 0 0 20px 0;
+                color: #333;
+            }}
+            img {{
+                max-width: 100%;
+                height: auto;
+                border-radius: 8px;
+                margin: 20px 0;
+            }}
+            .app-link {{
+                display: inline-block;
+                margin-top: 20px;
+                padding: 12px 24px;
+                background: #007AFF;
+                color: white;
+                text-decoration: none;
+                border-radius: 8px;
+                font-weight: 600;
+            }}
+            .app-link:hover {{
+                background: #0056CC;
+            }}
+            #fallback {{
+                display: none;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container" id="fallback">
+            <h1>{ticker} Price Chart</h1>
+            {f'<img src="/api/assets/share-image/{image_path.name}" alt="{ticker} Chart" />' if image_path else '<p>Chart image not found</p>'}
+            <a href="strctracker://asset/{ticker}" class="app-link">Open in STRC Tracker App</a>
+            <p style="margin-top: 20px; color: #666; font-size: 14px;">
+                If the app didn't open automatically, tap the button above.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+
+@router.get("/share-image/{filename}")
+async def get_share_image(filename: str):
+    """
+    Serve the uploaded share image file.
+    """
+    file_path = UPLOAD_DIR / filename
+    
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found"
+        )
+    
+    return FileResponse(
+        path=file_path,
+        media_type="image/png" if filename.endswith('.png') else "image/jpeg"
+    )
 

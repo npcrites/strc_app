@@ -4,12 +4,14 @@ Syncs positions from Alpaca API to the database
 """
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from app.models.position import Position
 from app.models.user import User
 from app.services.alpaca_trading_service import AlpacaTradingService
+from app.services.nav_service import ensure_nav_for_new_position
 from app.core.config import settings
+from app.core.utils import get_parent_ticker
 import logging
 
 logger = logging.getLogger(__name__)
@@ -176,6 +178,9 @@ class PositionSyncService:
             # Track which positions we've seen
             seen_tickers = set()
             
+            # Track newly created positions for NAV fetching
+            newly_created_tickers = []
+            
             created_count = 0
             updated_count = 0
             
@@ -225,6 +230,9 @@ class PositionSyncService:
                 if not position_name:
                     position_name = alpaca_pos.get("symbol", ticker)
                 
+                # Get parent ticker for this position
+                parent_ticker = get_parent_ticker(ticker)
+                
                 # Check if position exists
                 if ticker in existing_positions:
                     # Update existing position
@@ -234,8 +242,9 @@ class PositionSyncService:
                     position.market_value = Decimal(str(market_value)) if market_value else None
                     position.asset_type = asset_type
                     position.name = position_name
-                    position.updated_at = datetime.utcnow()
-                    position.snapshot_timestamp = datetime.utcnow()  # Track last sync time
+                    position.parent_ticker = parent_ticker  # Update parent ticker in case mapping changed
+                    position.updated_at = datetime.now(timezone.utc)
+                    position.snapshot_timestamp = datetime.now(timezone.utc)  # Track last sync time
                     updated_count += 1
                 else:
                     # Create new position
@@ -243,14 +252,31 @@ class PositionSyncService:
                         user_id=user.id,
                         ticker=ticker,
                         name=position_name,
+                        parent_ticker=parent_ticker,  # Automatically set parent ticker
                         shares=Decimal(str(qty)),
                         cost_basis=Decimal(str(cost_basis)),
                         market_value=Decimal(str(market_value)) if market_value else None,
                         asset_type=asset_type,
-                        snapshot_timestamp=datetime.utcnow()  # Initial snapshot timestamp
+                        snapshot_timestamp=datetime.now(timezone.utc)  # Initial snapshot timestamp
                     )
                     db.add(position)
                     created_count += 1
+                    newly_created_tickers.append(ticker)
+            
+            # Commit positions first
+            if created_count > 0 or updated_count > 0:
+                db.commit()
+                
+                # After committing positions, fetch NAV for any new parent companies
+                # This is done after commit to ensure positions are saved even if NAV fetch fails
+                for ticker in newly_created_tickers:
+                    try:
+                        ensure_nav_for_new_position(db, ticker)
+                        db.commit()  # Commit NAV data separately
+                    except Exception as nav_error:
+                        # Don't fail position creation if NAV fetch fails
+                        logger.warning(f"Failed to fetch NAV for parent of {ticker}: {nav_error}")
+                        db.rollback()  # Rollback only NAV changes, positions are already committed
             
             # Remove positions that no longer exist in Alpaca
             # BUT preserve positions that are in ALLOWED_TICKERS (manually managed positions)

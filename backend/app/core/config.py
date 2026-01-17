@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     ALPACA_OAUTH_BASE_URL: str = "https://app.alpaca.markets"  # Paper trading OAuth
     # For production: use "https://alpaca.markets"
     
+    # Bitcoin Treasuries API (for NAV data)
+    BT_API_KEY: str = ""
+    
+    # Alpha Vantage API (for dividend data)
+    ALPHA_VANTAGE_API_KEY: str = ""
+    
+    # Dividend sync settings
+    DIVIDEND_SYNC_ENABLED: bool = True
+    DIVIDEND_SYNC_INTERVAL_HOURS: int = 24  # Daily
+    
     # Allowed tickers for trading
     ALLOWED_TICKERS: List[str] = ["STRC", "STRD", "STRK", "STRF", "SATA"]
     
@@ -51,6 +61,10 @@ class Settings(BaseSettings):
     
     # App
     DEBUG: bool = True
+    
+    # Share image configuration
+    SHARE_IMAGE_BASE_URL: str = "http://localhost:8000"  # Change to your production domain
+    SHARE_IMAGE_UPLOAD_DIR: str = "uploads/share_images"
     
     model_config = {
         "env_file": ".env",

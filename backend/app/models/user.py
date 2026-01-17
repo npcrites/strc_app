@@ -43,11 +43,6 @@ class User(Base):
         back_populates="user", 
         cascade="all, delete-orphan"
     )
-    ex_dates = relationship(
-        "ExDate", 
-        back_populates="user", 
-        cascade="all, delete-orphan"
-    )
     portfolio_snapshots = relationship(
         "PortfolioSnapshot",
         back_populates="user",

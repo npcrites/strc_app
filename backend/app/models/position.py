@@ -16,6 +16,7 @@ class Position(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     ticker = Column(String, nullable=False, index=True)  # e.g., "STRC", "SATA", "MSTR-A"
     name = Column(String, nullable=True)  # Full security name
+    parent_ticker = Column(String, nullable=True, index=True)  # Parent company ticker (e.g., "MSTR" for "MSTR-A", NULL for standalone assets)
     shares = Column(Numeric(15, 6), nullable=False)  # Number of shares
     cost_basis = Column(Numeric(15, 2), nullable=False)  # Total cost basis
     market_value = Column(Numeric(15, 2), nullable=True)  # Current market value
@@ -36,6 +37,7 @@ class Position(Base):
     __table_args__ = (
         Index('idx_positions_user_id', 'user_id'),
         Index('idx_positions_ticker', 'ticker'),
+        Index('idx_positions_parent_ticker', 'parent_ticker'),
         Index('idx_positions_snapshot_timestamp', 'snapshot_timestamp'),
     )
     

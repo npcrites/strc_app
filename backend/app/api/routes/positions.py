@@ -18,6 +18,7 @@ class PositionResponse(BaseModel):
     id: int
     ticker: str
     name: Optional[str]
+    parent_ticker: Optional[str]  # Parent company ticker (e.g., "MSTR" for "MSTR-A", None for standalone assets)
     shares: float
     cost_basis: float
     market_value: Optional[float]
@@ -56,6 +57,7 @@ async def get_positions(
                 id=pos.id,
                 ticker=pos.ticker,
                 name=pos.name,
+                parent_ticker=pos.parent_ticker,
                 shares=float(pos.shares),
                 cost_basis=float(pos.cost_basis),
                 market_value=float(pos.market_value) if pos.market_value else None,
@@ -106,6 +108,7 @@ async def get_position(
             id=position.id,
             ticker=position.ticker,
             name=position.name,
+            parent_ticker=position.parent_ticker,
             shares=float(position.shares),
             cost_basis=float(position.cost_basis),
             market_value=float(position.market_value) if position.market_value else None,

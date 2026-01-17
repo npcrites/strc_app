@@ -428,15 +428,15 @@ class MockDataFactory:
     @staticmethod
     def create_ex_dates(
         db: Session,
-        user_id: int,
+        user_id: Optional[int] = None,  # Deprecated: kept for backward compatibility but not used
         ex_dates_config: Optional[List[Dict]] = None
     ) -> List[ExDate]:
         """
-        Create ex-dates for tickers.
+        Create ex-dates for tickers (asset-specific, not user-specific).
         
         Args:
             db: Database session
-            user_id: User ID
+            user_id: Deprecated - kept for backward compatibility but not used
             ex_dates_config: List of ex-date config dicts (if None, uses defaults)
         
         Returns:
@@ -490,9 +490,8 @@ class MockDataFactory:
         
         ex_dates = []
         for ex_data in ex_dates_config:
-            # Check if ex-date already exists
+            # Check if ex-date already exists (no user_id check)
             existing = db.query(ExDate).filter(
-                ExDate.user_id == user_id,
                 ExDate.ticker == ex_data["ticker"],
                 ExDate.ex_date == ex_data["ex_date"]
             ).first()
@@ -501,10 +500,12 @@ class MockDataFactory:
                 ex_dates.append(existing)
                 continue
             
-            ex_date = ExDate(
-                user_id=user_id,
-                **ex_data
-            )
+            # Convert Decimal to string for dividend_amount if needed
+            ex_data_copy = ex_data.copy()
+            if "dividend_amount" in ex_data_copy and isinstance(ex_data_copy["dividend_amount"], Decimal):
+                ex_data_copy["dividend_amount"] = str(ex_data_copy["dividend_amount"])
+            
+            ex_date = ExDate(**ex_data_copy)
             db.add(ex_date)
             ex_dates.append(ex_date)
         

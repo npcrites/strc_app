@@ -18,6 +18,7 @@ from app.models.user import User
 from app.models.position import Position
 from app.services.alpaca_trading_service import AlpacaTradingService
 from app.services.position_sync_service import condense_company_name
+from app.core.utils import get_parent_ticker
 from typing import Optional
 import logging
 import asyncio
@@ -169,6 +170,9 @@ def update_portfolio_positions(user_email: str = "demo@example.com"):
                 Position.ticker == ticker
             ).first()
             
+            # Get parent ticker for this position
+            parent_ticker = get_parent_ticker(ticker)
+            
             if existing_position:
                 # Update existing position
                 # Only update name if we got one from Alpaca, otherwise preserve existing
@@ -181,6 +185,7 @@ def update_portfolio_positions(user_email: str = "demo@example.com"):
                 existing_position.cost_basis = asset["cost_basis"]
                 existing_position.market_value = asset["market_value"]
                 existing_position.asset_type = asset["asset_type"]
+                existing_position.parent_ticker = parent_ticker  # Update parent ticker
                 existing_position.snapshot_timestamp = datetime.now(timezone.utc)
                 existing_position.updated_at = datetime.now(timezone.utc)
                 positions_updated.append(ticker)
@@ -194,6 +199,7 @@ def update_portfolio_positions(user_email: str = "demo@example.com"):
                     user_id=user.id,
                     ticker=ticker,
                     name=position_name,
+                    parent_ticker=parent_ticker,  # Automatically set parent ticker
                     shares=asset["shares"],
                     cost_basis=asset["cost_basis"],
                     market_value=asset["market_value"],

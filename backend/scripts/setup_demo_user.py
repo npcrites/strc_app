@@ -26,7 +26,7 @@ def wipe_user_data(db, user_id: int):
     # Delete in order to respect foreign key constraints
     db.query(Dividend).filter(Dividend.user_id == user_id).delete()
     db.query(Position).filter(Position.user_id == user_id).delete()
-    db.query(ExDate).filter(ExDate.user_id == user_id).delete()
+    # Note: ExDate no longer has user_id - it's asset-specific, not user-specific
     db.query(User).filter(User.id == user_id).delete()
     
     db.commit()

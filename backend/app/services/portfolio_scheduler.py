@@ -9,6 +9,7 @@ from app.db.session import SessionLocal
 from app.services.price_service import PriceService
 from app.services.snapshot_service import SnapshotService
 from app.services.position_sync_service import PositionSyncService
+from app.services.dividend_data_service import DividendDataService
 from app.core.config import settings
 import asyncio
 import logging
@@ -102,6 +103,43 @@ def create_snapshots_job() -> None:
         db.close()
 
 
+def sync_dividends_job() -> None:
+    """
+    Job function that runs on schedule to sync dividend data from FMP API.
+    Creates a new database session for each run.
+    """
+    if not settings.DIVIDEND_SYNC_ENABLED:
+        logger.debug("Dividend sync is disabled")
+        return
+    
+    db = SessionLocal()
+    try:
+        logger.info("Starting dividend sync job")
+        dividend_service = DividendDataService()
+        
+        # Sync ExDate records from FMP API
+        stats = dividend_service.sync_all_allowed_tickers(db)
+        logger.info(
+            f"Dividend sync completed: {stats['tickers_processed']} tickers processed, "
+            f"{stats['total_created']} created, {stats['total_updated']} updated, "
+            f"{stats['total_fetched']} fetched from API"
+        )
+        
+        # Create/update user Dividend records from ExDate records
+        total_dividends_created = 0
+        for ticker in settings.ALLOWED_TICKERS:
+            count = dividend_service.create_user_dividends_from_exdates(db, ticker)
+            total_dividends_created += count
+        
+        if total_dividends_created > 0:
+            logger.info(f"Created/updated {total_dividends_created} user dividend records")
+        
+    except Exception as e:
+        logger.error(f"Error in dividend sync job: {str(e)}", exc_info=True)
+    finally:
+        db.close()
+
+
 def start_scheduler() -> Optional[BackgroundScheduler]:
     """
     Start the background scheduler for price updates and snapshots.
@@ -116,7 +154,7 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
         return _scheduler
     
     # Check if any jobs are enabled
-    if not settings.PRICE_UPDATE_ENABLED and not settings.POSITION_SYNC_ENABLED and not settings.SNAPSHOT_ENABLED:
+    if not settings.PRICE_UPDATE_ENABLED and not settings.POSITION_SYNC_ENABLED and not settings.SNAPSHOT_ENABLED and not settings.DIVIDEND_SYNC_ENABLED:
         logger.info("Portfolio scheduler is disabled (all jobs disabled)")
         return None
     
@@ -164,6 +202,20 @@ def start_scheduler() -> Optional[BackgroundScheduler]:
         logger.info(f"Snapshot creation job scheduled: every {interval_minutes} minutes")
     else:
         logger.info("Snapshot creation job is disabled")
+    
+    # Schedule dividend sync job
+    if settings.DIVIDEND_SYNC_ENABLED:
+        interval_hours = settings.DIVIDEND_SYNC_INTERVAL_HOURS
+        _scheduler.add_job(
+            func=sync_dividends_job,
+            trigger=IntervalTrigger(hours=interval_hours),
+            id='dividend_sync_job',
+            name='Dividend Sync Job',
+            replace_existing=True
+        )
+        logger.info(f"Dividend sync job scheduled: every {interval_hours} hours")
+    else:
+        logger.info("Dividend sync job is disabled")
     
     # Start scheduler
     _scheduler.start()

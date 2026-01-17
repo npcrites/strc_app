@@ -58,13 +58,13 @@ export default function TimeRangeSelector({
 
 const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => StyleSheet.create({
   outerContainer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 90,
     marginBottom: 20,
   },
   timeRangeContainer: {
     backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : 'rgba(255, 255, 255, 0.95)', // Match chart component opacity in light mode
-    borderRadius: 16,
-    padding: 8,
+    borderRadius: 12,
+    padding: 6,
     // Glass-like border (only in dark mode)
     borderWidth: isDark ? 1 : 0,
     borderColor: isDark ? ((colors as any).glassBorder || 'rgba(70, 64, 56, 0.5)') : 'transparent', // Theme-aware border
@@ -81,12 +81,12 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
   timeRangeButtons: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
   },
   timeRangeButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
     // No background for inactive buttons
   },
   timeRangeButtonActive: {
@@ -102,7 +102,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     elevation: 8, // Android shadow for 3D effect
   },
   timeRangeButtonText: {
-    fontSize: 14,
+    fontSize: 12,
     color: colors.textSecondary,
     fontWeight: '500',
   },
