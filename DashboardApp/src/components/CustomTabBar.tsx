@@ -10,6 +10,7 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation, useNavigationState, useIsFocused } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
@@ -45,9 +46,11 @@ export default function CustomTabBar({
   descriptors,
   navigation,
 }: CustomTabBarProps) {
+  // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const screenWidth = Dimensions.get('window').width;
+  const rootState = useNavigationState((state) => state);
   
   // Initialize styles early
   const styles = useMemo(() => createStyles(getColors(isDark), isDark), [isDark]);
@@ -81,7 +84,7 @@ export default function CustomTabBar({
   const pillWidth = useRef(new Animated.Value(0)).current;
   const tabPositions = useRef<number[]>([]); // Store x positions of each tab
   const tabWidths = useRef<number[]>([]); // Store widths of each tab
-
+  
   // Load saved position on mount
   useEffect(() => {
     const loadPosition = async () => {
@@ -98,7 +101,7 @@ export default function CustomTabBar({
     };
     loadPosition();
   }, []);
-
+  
   // Calculate target X based on positionIndex and containerWidth
   const getTargetX = useCallback((): number => {
     if (positionIndex === 0) {
@@ -110,7 +113,7 @@ export default function CustomTabBar({
       return rightX;
     }
   }, [positionIndex, screenWidth, containerWidth]);
-
+  
   // Helper to calculate target X for a given index (used in release handler)
   const calculateTargetX = useCallback((index: number, width: number): number => {
     if (index === 0) {
@@ -119,7 +122,17 @@ export default function CustomTabBar({
       return screenWidth - width - MARGIN;
     }
   }, [screenWidth]);
-
+  
+  // Save position to storage
+  const savePosition = useCallback(async (index: number) => {
+    try {
+      await AsyncStorage.setItem(TAB_BAR_POSITION_KEY, index.toString());
+      console.log('💾 Saved position to storage:', index === 0 ? 'left' : 'right');
+    } catch (error) {
+      console.error('Failed to save tab bar position:', error);
+    }
+  }, []);
+  
   // Animation effect: watches positionIndex, animates when it changes
   useEffect(() => {
     // CRITICAL: Check skipNextEffect FIRST, before any other checks
@@ -167,16 +180,6 @@ export default function CustomTabBar({
       console.log('✅ Animation complete, final position:', finalX);
     });
   }, [positionIndex, isLayoutMeasured, getTargetX, translateX]);
-
-  // Save position to storage
-  const savePosition = useCallback(async (index: number) => {
-    try {
-      await AsyncStorage.setItem(TAB_BAR_POSITION_KEY, index.toString());
-      console.log('💾 Saved position to storage:', index === 0 ? 'left' : 'right');
-    } catch (error) {
-      console.error('Failed to save tab bar position:', error);
-    }
-  }, []);
 
   // Initialize inactive tabs on mount
   useEffect(() => {
@@ -536,6 +539,23 @@ export default function CustomTabBar({
       // The animation effect will re-run and adjust position
     }
   }, [isLayoutMeasured, containerWidth, positionIndex, screenWidth, translateX]);
+
+  // NOW CHECK CONDITIONS AND RETURN EARLY IF NEEDED (after all hooks)
+  // Only show tab bar on Home screen
+  const currentRoute = state.routes[state.index]?.name;
+  if (currentRoute !== 'Home') {
+    return null;
+  }
+  
+  // Also hide if we're on a detail screen (check root navigation state)
+  // This ensures the tab bar doesn't show through when navigating to stack screens
+  if (rootState) {
+    const rootRoute = rootState.routes[rootState.index];
+    // If the root route is not "Main" (the tab navigator), hide the tab bar
+    if (rootRoute?.name !== 'Main') {
+      return null;
+    }
+  }
 
   const containerStyle = [
     styles.container,

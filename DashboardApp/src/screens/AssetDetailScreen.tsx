@@ -9,10 +9,14 @@ import {
   StatusBar,
   Animated,
   Share,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import * as Haptics from 'expo-haptics';
 import AnimatedNumbers from 'react-native-animated-numbers';
 import ViewShot from 'react-native-view-shot';
 import { useAuth } from '../context/AuthContext';
@@ -955,6 +959,114 @@ export default function AssetDetailScreen() {
           </TouchableOpacity>
         )}
       </ScrollView>
+
+      {/* Floating Buy/Sell Buttons */}
+      <View
+        style={[
+          styles.bottomButtonContainer,
+          {
+            bottom: Math.max(insets.bottom, 12) + 16,
+          }
+        ]}
+      >
+        {Platform.OS === 'ios' ? (
+          <>
+            <BlurView
+              intensity={80}
+              tint="light"
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={{ zIndex: 1 }}>
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={styles.buyButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                    // TODO: Handle buy action
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <LinearGradient
+                    colors={[getColors(isDark).green + 'E6', getColors(isDark).green + 'CC']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFill}
+                  />
+                  <View style={styles.buttonTextContainer}>
+                    <Text style={styles.buttonText}>Buy</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.sellButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                    // TODO: Handle sell action
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <LinearGradient
+                    colors={[getColors(isDark).red + 'E6', getColors(isDark).red + 'CC']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFill}
+                  />
+                  <View style={styles.buttonTextContainer}>
+                    <Text style={styles.buttonText}>Sell</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </>
+        ) : (
+          <>
+            {!isDark && (
+              <BlurView
+                intensity={40}
+                tint="light"
+                style={StyleSheet.absoluteFill}
+              />
+            )}
+            <View style={styles.buttonRow}>
+              <TouchableOpacity
+                style={styles.buyButton}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                  // TODO: Handle buy action
+                }}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={[getColors(isDark).green + 'E6', getColors(isDark).green + 'CC']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View style={styles.buttonTextContainer}>
+                  <Text style={styles.buttonText}>Buy</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.sellButton}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                  // TODO: Handle sell action
+                }}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={[getColors(isDark).red + 'E6', getColors(isDark).red + 'CC']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View style={styles.buttonTextContainer}>
+                  <Text style={styles.buttonText}>Sell</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+      </View>
     </View>
   );
 }
@@ -968,7 +1080,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 40,
+    paddingBottom: 120, // Extra padding for floating buttons
   },
   topBar: {
     paddingHorizontal: 20,
@@ -1393,6 +1505,97 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     fontWeight: '600',
     fontFamily: 'Inter-SemiBold',
     color: colors.backgroundWhite,
+  },
+  bottomButtonContainer: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    backgroundColor: isDark 
+      ? (Platform.OS === 'ios' ? 'transparent' : colors.backgroundWhite)
+      : 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 35,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    overflow: 'hidden',
+    ...(isDark ? {
+      shadowColor: '#000',
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: Platform.OS === 'ios' ? 0.08 : 0.05,
+      shadowRadius: Platform.OS === 'ios' ? 6 : 4,
+      elevation: 4,
+    } : {
+      shadowColor: '#FFFFFF',
+      shadowOffset: {
+        width: -4,
+        height: -4,
+      },
+      shadowOpacity: 0.7,
+      shadowRadius: 8,
+      elevation: 0,
+      overflow: 'hidden',
+    }),
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  buyButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    borderRadius: 30,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 50,
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  sellButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    borderRadius: 30,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 50,
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  buttonTextContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    textAlign: 'center',
   },
 });
 
