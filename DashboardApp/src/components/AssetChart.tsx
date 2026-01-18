@@ -13,6 +13,8 @@ export interface AssetChartProps {
   tradingHoursMode: TradingHoursMode;
   isPositive: boolean;
   height?: number;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
 }
 
 const screenWidth = Dimensions.get('window').width;
@@ -26,6 +28,8 @@ export default function AssetChart({
   tradingHoursMode,
   isPositive,
   height = 250,
+  onDragStart,
+  onDragEnd,
 }: AssetChartProps) {
   const { isDark } = useTheme();
   const colors = getColors(isDark);
@@ -49,6 +53,8 @@ export default function AssetChart({
         width={chartWidth}
         timeRange={timeRange}
         tradingHoursMode={tradingHoursMode}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
         config={{
           lineColor: isPositive ? colors.orange : colors.textSecondary,
           gradientStartColor: isPositive ? colors.orange : colors.textSecondary,

@@ -1215,9 +1215,10 @@ function useChartDrag({
         setIsDragging(true);
         isDraggingRef.current = true;
         setIsHolding(false);
+        // Disable scrolling only after hold timer fires (0.25s)
+        onDragStart?.();
         // Haptic feedback when entering slider mode - Medium intensity
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        onDragStart?.();
       } else {
         setIsHolding(false);
       }
@@ -1259,11 +1260,13 @@ function useChartDrag({
     setIsHolding(false);
     isDraggingRef.current = false;
     initialTouchXRef.current = null;
+    setCurrentDragData(null); // Clear tooltip data
     
+    // Re-enable scrolling only if we were in drag mode
     if (wasDragging) {
-          // Haptic feedback when exiting slider mode - Medium intensity
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          onDragEnd?.();
+      // Haptic feedback when exiting slider mode - Medium intensity
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      onDragEnd?.();
     }
   }, [onDragEnd]);
   
@@ -1284,7 +1287,9 @@ function useChartDrag({
     setIsHolding(false);
     isDraggingRef.current = false;
     initialTouchXRef.current = null;
+    setCurrentDragData(null); // Clear tooltip data
     
+    // Re-enable scrolling only if we were in drag mode
     if (wasDragging) {
       // Haptic feedback when exiting slider mode (canceled) - Medium intensity
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);

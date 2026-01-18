@@ -278,18 +278,19 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
   },
   summaryCard: {
     backgroundColor: isDark 
-      ? ((colors as any).glassBackground || 'rgba(70, 64, 56, 0.3)')
+      ? ((colors as any).glassBackground || 'rgba(255, 255, 255, 0.7)')
       : 'rgba(255, 255, 255, 0.95)',
     borderRadius: 16,
     padding: 20,
     marginBottom: 16,
     borderWidth: isDark ? 1 : 0,
-    borderColor: isDark ? ((colors as any).glassBorder || 'rgba(70, 64, 56, 0.5)') : 'transparent',
-    shadowColor: isDark ? ((colors as any).glassShadowGlow || '#CC6A1F') : '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: isDark ? 0.04 : 0.12,
+    borderColor: (colors as any).glassBorder || 'rgba(255, 255, 255, 0.3)',
+    shadowColor: (colors as any).glassShadowGlow || '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: isDark ? ((colors as any).glassShadowGlow ? 0.04 : 0.12) : 0.12,
     shadowRadius: 8,
     elevation: 4,
+    overflow: 'hidden',
   },
   summaryTitle: {
     fontSize: 18,

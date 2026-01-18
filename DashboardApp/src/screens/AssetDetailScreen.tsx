@@ -84,6 +84,7 @@ export default function AssetDetailScreen() {
   const [positionLoading, setPositionLoading] = useState(false);
   const [holdings, setHoldings] = useState<Holdings | null>(null);
   const [holdingsLoading, setHoldingsLoading] = useState(false);
+  const [scrollEnabled, setScrollEnabled] = useState(true);
 
   // Ensure header is never shown (prevents default back arrow from appearing)
   useLayoutEffect(() => {
@@ -573,6 +574,7 @@ export default function AssetDetailScreen() {
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        scrollEnabled={scrollEnabled}
       >
         {/* Top Bar - Back Button and Export Button */}
         <View style={styles.topBar}>
@@ -807,6 +809,8 @@ export default function AssetDetailScreen() {
             timeRange={timeRange}
             tradingHoursMode={tradingHoursMode}
             isPositive={isPositive}
+            onDragStart={() => setScrollEnabled(false)}
+            onDragEnd={() => setScrollEnabled(true)}
           />
         </ViewShot>
 
@@ -818,15 +822,15 @@ export default function AssetDetailScreen() {
 
         {/* My Holdings Section - Show if user holds the asset OR has pending payout */}
         {holdings && (holdings.shares > 0 || (holdings.next_pay_date_adjusted || holdings.next_pay_date)) && (
-          <View style={styles.holdingsContainer}>
-            <TouchableOpacity 
-              style={styles.holdingsHeader}
-              onPress={() => navigation.navigate('HoldingsDetail', { ticker })}
-              activeOpacity={0.7}
-            >
+          <TouchableOpacity 
+            style={styles.holdingsContainer}
+            onPress={() => navigation.navigate('HoldingsDetail', { ticker })}
+            activeOpacity={0.7}
+          >
+            <View style={styles.holdingsHeader}>
               <Text style={styles.holdingsTitle}>My Holdings</Text>
               <Ionicons name="chevron-forward" size={20} color={getColors(isDark).textSecondary} />
-            </TouchableOpacity>
+            </View>
             
             <View style={styles.holdingsRow}>
               <View style={styles.holdingsLeft}>
@@ -843,7 +847,7 @@ export default function AssetDetailScreen() {
                 </Text>
               </View>
             </View>
-          </View>
+          </TouchableOpacity>
         )}
 
         {/* Separator line between My Holdings and My Payouts */}
@@ -859,15 +863,15 @@ export default function AssetDetailScreen() {
           const showPayday = holdings.next_pay_date_adjusted || holdings.next_pay_date;
           
           return (
-            <View style={styles.payoutsContainer}>
-              <TouchableOpacity 
-                style={styles.payoutsHeader}
-                onPress={() => navigation.navigate('PayoutsDetail', { ticker })}
-                activeOpacity={0.7}
-              >
+            <TouchableOpacity 
+              style={styles.payoutsContainer}
+              onPress={() => navigation.navigate('PayoutsDetail', { ticker })}
+              activeOpacity={0.7}
+            >
+              <View style={styles.payoutsHeader}>
                 <Text style={styles.payoutsTitle}>My Payouts</Text>
                 <Ionicons name="chevron-forward" size={20} color={getColors(isDark).textSecondary} />
-              </TouchableOpacity>
+              </View>
               
               <View style={styles.payoutsRow}>
                 {/* Only show "Invest By" if ex-date/invest_by_date is still upcoming */}
@@ -910,7 +914,7 @@ export default function AssetDetailScreen() {
                   </View>
                 )}
               </View>
-            </View>
+            </TouchableOpacity>
           );
         })()}
 
@@ -921,8 +925,15 @@ export default function AssetDetailScreen() {
 
         {/* Details Section */}
         {((navData?.current_nav !== null && navData?.current_nav !== undefined) || holdings?.daily_volume != null) && (
-          <View style={styles.detailsContainer}>
-            <Text style={styles.detailsSectionTitle}>Details</Text>
+          <TouchableOpacity 
+            style={styles.detailsContainer}
+            onPress={() => navigation.navigate('HoldingsDetail', { ticker })}
+            activeOpacity={0.7}
+          >
+            <View style={styles.detailsHeader}>
+              <Text style={styles.detailsSectionTitle}>Details</Text>
+              <Ionicons name="chevron-forward" size={20} color={getColors(isDark).textSecondary} />
+            </View>
             
             {navData?.current_nav !== null && navData?.current_nav !== undefined && (
               <View style={styles.detailsRow}>
@@ -941,7 +952,7 @@ export default function AssetDetailScreen() {
                 </Text>
               </View>
             )}
-          </View>
+          </TouchableOpacity>
         )}
       </ScrollView>
     </View>
@@ -1155,7 +1166,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
   rthEthToggle: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 12,
+    borderRadius: 8,
     // No background by default (inactive state)
   },
   rthEthToggleActive: {
@@ -1192,12 +1203,17 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     shadowRadius: 8,
     elevation: 4,
   },
+  detailsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   detailsSectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     fontFamily: 'ChakraPetch-Bold',
     color: colors.textPrimary,
-    marginBottom: 16,
   },
   detailsRow: {
     flexDirection: 'row',
