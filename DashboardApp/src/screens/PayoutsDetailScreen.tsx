@@ -21,6 +21,7 @@ import BackButton from '../components/BackButton';
 import MSTRSymbol from '../components/MSTRSymbol';
 import ASSTSymbol from '../components/ASSTSymbol';
 import { hasMSTRParent, hasASTTParent } from '../utils/assetUtils';
+import { Holdings } from '../types';
 
 type RootStackParamList = {
   PayoutsDetail: { ticker: string };
@@ -53,6 +54,7 @@ export default function PayoutsDetailScreen() {
   const { ticker } = route.params;
 
   const [payouts, setPayouts] = useState<PayoutsResponse | null>(null);
+  const [holdings, setHoldings] = useState<Holdings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,6 +63,7 @@ export default function PayoutsDetailScreen() {
 
   useEffect(() => {
     fetchPayouts();
+    fetchHoldings();
   }, [ticker]);
 
   const fetchPayouts = async () => {
@@ -79,6 +82,16 @@ export default function PayoutsDetailScreen() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchHoldings = async () => {
+    try {
+      const response = await api.get<Holdings>(`/assets/${ticker}/holdings`, token);
+      setHoldings(response);
+    } catch (err: any) {
+      console.error('Error fetching holdings:', err);
+      // Don't set error - holdings fetch failure shouldn't block the screen
     }
   };
 
@@ -122,10 +135,24 @@ export default function PayoutsDetailScreen() {
   const totalDividendsEarned = payouts?.past_payouts.reduce((sum, payout) => sum + payout.amount, 0) || 0;
   const payoutCount = payouts?.past_payouts.length || 0;
 
-  // Determine payout frequency based on ticker
-  const getPayoutFrequency = (ticker: string): string => {
+  // Determine payout frequency from stored dividend_frequency or fallback to ticker-based logic
+  const getPayoutFrequency = (): string => {
+    // Use stored dividend_frequency if available
+    if (holdings?.dividend_frequency) {
+      const freq = holdings.dividend_frequency.toLowerCase();
+      if (freq === 'monthly') {
+        return 'Monthly Dividend Payment';
+      } else if (freq === 'quarterly') {
+        return 'Quarterly Dividend Payment';
+      } else if (freq === 'semi-annually') {
+        return 'Semi-Annual Dividend Payment';
+      } else if (freq === 'annually') {
+        return 'Annual Dividend Payment';
+      }
+    }
+    
+    // Fallback to ticker-based logic for backwards compatibility
     const tickerUpper = ticker.toUpperCase();
-    // STRC, SATA, and STRF are monthly payouts
     if (['STRC', 'SATA', 'STRF'].includes(tickerUpper)) {
       return 'Monthly Dividend Payment';
     }
@@ -284,7 +311,7 @@ export default function PayoutsDetailScreen() {
                         <View style={styles.pastPayoutTextContainer}>
                           <Text style={styles.pastPayoutAsset}>{ticker}</Text>
                           <Text style={styles.pastPayoutFrequency}>
-                            {getPayoutFrequency(ticker)}
+                            {getPayoutFrequency()}
                           </Text>
                           <Text style={styles.pastPayoutDate}>
                             {formatDateForDisplay(getDisplayDate(payout))}

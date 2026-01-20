@@ -23,6 +23,7 @@ class PositionResponse(BaseModel):
     cost_basis: float
     market_value: Optional[float]
     asset_type: Optional[str]
+    dividend_frequency: Optional[str] = None  # e.g., "monthly", "quarterly", "semi-annually", "annually"
     average_cost_per_share: float
     current_price_per_share: Optional[float]
     unrealized_gain_loss: Optional[float]
@@ -62,6 +63,7 @@ async def get_positions(
                 cost_basis=float(pos.cost_basis),
                 market_value=float(pos.market_value) if pos.market_value else None,
                 asset_type=pos.asset_type,
+                dividend_frequency=pos.dividend_frequency,
                 average_cost_per_share=pos.average_cost_per_share,
                 current_price_per_share=pos.current_price_per_share,
                 unrealized_gain_loss=pos.unrealized_gain_loss,
@@ -113,6 +115,7 @@ async def get_position(
             cost_basis=float(position.cost_basis),
             market_value=float(position.market_value) if position.market_value else None,
             asset_type=position.asset_type,
+            dividend_frequency=position.dividend_frequency,
             average_cost_per_share=position.average_cost_per_share,
             current_price_per_share=position.current_price_per_share,
             unrealized_gain_loss=position.unrealized_gain_loss,

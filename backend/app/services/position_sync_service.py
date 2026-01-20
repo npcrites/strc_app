@@ -12,6 +12,7 @@ from app.services.alpaca_trading_service import AlpacaTradingService
 from app.services.nav_service import ensure_nav_for_new_position
 from app.core.config import settings
 from app.core.utils import get_parent_ticker
+from app.models.asset_metadata import AssetMetadata
 import logging
 
 logger = logging.getLogger(__name__)
@@ -240,6 +241,20 @@ class PositionSyncService:
                 # Get parent ticker for this position
                 parent_ticker = get_parent_ticker(ticker)
                 
+                # Get dividend frequency from AssetMetadata (asset-level, authoritative)
+                # Fallback to get_dividend_frequency if metadata doesn't exist
+                asset_metadata = db.query(AssetMetadata).filter(
+                    AssetMetadata.ticker == ticker
+                ).first()
+                
+                dividend_freq = None
+                if asset_metadata and asset_metadata.dividend_frequency:
+                    dividend_freq = asset_metadata.dividend_frequency
+                else:
+                    # Fallback to hardcoded logic for backwards compatibility
+                    from app.core.utils import get_dividend_frequency
+                    dividend_freq = get_dividend_frequency(ticker)
+                
                 # Check if position exists
                 if ticker in existing_positions:
                     # Update existing position
@@ -250,6 +265,9 @@ class PositionSyncService:
                     position.asset_type = asset_type
                     position.name = position_name
                     position.parent_ticker = parent_ticker  # Update parent ticker in case mapping changed
+                    # Update dividend_frequency from asset metadata (always update to stay in sync)
+                    if dividend_freq:
+                        position.dividend_frequency = dividend_freq
                     position.updated_at = datetime.now(timezone.utc)
                     position.snapshot_timestamp = datetime.now(timezone.utc)  # Track last sync time
                     updated_count += 1
@@ -264,6 +282,7 @@ class PositionSyncService:
                         cost_basis=Decimal(str(cost_basis)),
                         market_value=Decimal(str(market_value)) if market_value else None,
                         asset_type=asset_type,
+                        dividend_frequency=dividend_freq,  # Set dividend frequency from asset metadata
                         snapshot_timestamp=datetime.now(timezone.utc)  # Initial snapshot timestamp
                     )
                     db.add(position)

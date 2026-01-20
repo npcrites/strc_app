@@ -58,6 +58,24 @@ def get_parent_ticker(ticker: str) -> Optional[str]:
     return None
 
 
+def get_dividend_frequency(ticker: str) -> Optional[str]:
+    """
+    Get dividend frequency for a ticker.
+    
+    Args:
+        ticker: Stock ticker symbol (e.g., "STRC", "SATA")
+    
+    Returns:
+        Dividend frequency string: "monthly", "quarterly", "semi-annually", "annually", or None
+    """
+    ticker_upper = ticker.upper()
+    # SATA and STRC are monthly
+    if ticker_upper in ['SATA', 'STRC']:
+        return 'monthly'
+    # Default to quarterly for other assets
+    return 'quarterly'
+
+
 def calculate_percentage_change(old_value: float, new_value: float) -> float:
     """Calculate percentage change between two values"""
     if old_value == 0:

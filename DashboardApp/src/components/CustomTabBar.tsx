@@ -541,9 +541,9 @@ export default function CustomTabBar({
   }, [isLayoutMeasured, containerWidth, positionIndex, screenWidth, translateX]);
 
   // NOW CHECK CONDITIONS AND RETURN EARLY IF NEEDED (after all hooks)
-  // Only show tab bar on Home screen
+  // Show tab bar on Home and Activity screens
   const currentRoute = state.routes[state.index]?.name;
-  if (currentRoute !== 'Home') {
+  if (currentRoute !== 'Home' && currentRoute !== 'Activity') {
     return null;
   }
   

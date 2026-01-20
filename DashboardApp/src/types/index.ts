@@ -63,6 +63,7 @@ export interface Position {
   cost_basis: number;
   market_value?: number;
   asset_type?: string;
+  dividend_frequency?: string;  // e.g., "monthly", "quarterly", "semi-annually", "annually"
   average_cost_per_share?: number;
   current_price_per_share?: number;
   unrealized_gain_loss?: number;
@@ -105,6 +106,13 @@ export interface Holdings {
   position_amount: number;
   shares: number;
   total_dividends: number;
+  dividend_calculation_type?: string | null;  // "fixed_dollar_per_share" or "fixed_percentage_rate"
+  fixed_dividend_per_share?: number | null;  // Dollar amount per share per period (for fixed_dollar_per_share)
+  dividend_rate_percentage?: number | null;  // Percentage rate (for fixed_percentage_rate)
+  is_cumulative?: boolean | null;  // True if missed payments must be paid back
+  dividend_frequency?: string | null;  // e.g., "monthly", "quarterly", "semi-annually", "annually" (from asset metadata)
+  target_dividend_yield?: number | null;  // Target dividend yield percentage (calculated or set)
+  special_features?: string | null;  // e.g., "convertible to MSTR shares"
   next_ex_date?: string | null;  // Next upcoming ex-dividend date (raw, ISO format)
   next_invest_by_date?: string | null;  // Last business day on or before ex_date (adjusted, ISO format)
   next_pay_date?: string | null;  // Payment date for next dividend (raw, ISO format)

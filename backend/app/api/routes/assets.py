@@ -74,6 +74,13 @@ class HoldingsResponse(BaseModel):
     position_amount: float  # Total value of position (shares * current_price)
     shares: float  # Number of shares held
     total_dividends: float  # Sum of all dividends paid for this ticker
+    dividend_calculation_type: Optional[str] = None  # "fixed_dollar_per_share" or "fixed_percentage_rate"
+    fixed_dividend_per_share: Optional[float] = None  # Dollar amount per share per period (for fixed_dollar_per_share)
+    dividend_rate_percentage: Optional[float] = None  # Percentage rate (for fixed_percentage_rate)
+    is_cumulative: Optional[bool] = None  # True if missed payments must be paid back
+    dividend_frequency: Optional[str] = None  # e.g., "monthly", "quarterly", "semi-annually", "annually" (from asset metadata)
+    target_dividend_yield: Optional[float] = None  # Target dividend yield percentage (calculated or set)
+    special_features: Optional[str] = None  # e.g., "convertible to MSTR shares"
     next_ex_date: Optional[date] = None  # Next upcoming ex-dividend date (raw)
     next_invest_by_date: Optional[date] = None  # Last business day on or before ex_date (adjusted)
     next_pay_date: Optional[date] = None  # Payment date for next dividend (raw)
@@ -2700,11 +2707,53 @@ async def get_asset_holdings(
         
         daily_volume = int(daily_volume_metric.value) if daily_volume_metric and daily_volume_metric.value else None
         
+        # Get asset metadata
+        from app.models.asset_metadata import AssetMetadata
+        asset_metadata = db.query(AssetMetadata).filter(
+            AssetMetadata.ticker == ticker_upper
+        ).first()
+        
+        # Calculate target_dividend_yield if not set but we have calculation data
+        target_yield = None
+        if asset_metadata:
+            # For fixed_dollar_per_share assets, ALWAYS calculate dynamically (never use stored target_dividend_yield)
+            # For fixed_percentage_rate assets, use the rate directly (it IS the yield)
+            if asset_metadata.dividend_calculation_type == "fixed_percentage_rate" and asset_metadata.dividend_rate_percentage:
+                target_yield = float(asset_metadata.dividend_rate_percentage)
+            elif asset_metadata.dividend_calculation_type == "fixed_dollar_per_share":
+                # Always calculate from current price for fixed dollar assets
+                price_service = PriceService()
+                prices = price_service.get_prices(db, [ticker_upper])
+                current_price = prices.get(ticker_upper)
+                if current_price:
+                    calculated_yield = asset_metadata.calculate_yield_from_price(current_price)
+                    if calculated_yield:
+                        target_yield = calculated_yield
+            elif asset_metadata.target_dividend_yield:
+                # Only use stored target_dividend_yield for legacy assets without calculation type
+                target_yield = float(asset_metadata.target_dividend_yield)
+            elif asset_metadata.dividend_calculation_type:
+                # Fallback: try to calculate from current price for other calculation types
+                price_service = PriceService()
+                prices = price_service.get_prices(db, [ticker_upper])
+                current_price = prices.get(ticker_upper)
+                if current_price:
+                    calculated_yield = asset_metadata.calculate_yield_from_price(current_price)
+                    if calculated_yield:
+                        target_yield = calculated_yield
+        
         return HoldingsResponse(
             ticker=ticker_upper,
             position_amount=position_amount,
             shares=shares,
             total_dividends=total_dividends,
+            dividend_calculation_type=asset_metadata.dividend_calculation_type if asset_metadata else None,
+            fixed_dividend_per_share=float(asset_metadata.fixed_dividend_per_share) if asset_metadata and asset_metadata.fixed_dividend_per_share else None,
+            dividend_rate_percentage=float(asset_metadata.dividend_rate_percentage) if asset_metadata and asset_metadata.dividend_rate_percentage else None,
+            is_cumulative=asset_metadata.is_cumulative if asset_metadata else None,
+            dividend_frequency=asset_metadata.dividend_frequency if asset_metadata else (position.dividend_frequency if position else None),
+            target_dividend_yield=target_yield,
+            special_features=asset_metadata.special_features if asset_metadata else None,
             next_ex_date=next_dividend.ex_date if next_dividend and next_dividend.ex_date else None,
             next_invest_by_date=next_dividend.invest_by_date if next_dividend and next_dividend.invest_by_date else None,
             next_pay_date=next_dividend.pay_date if next_dividend and next_dividend.pay_date else None,

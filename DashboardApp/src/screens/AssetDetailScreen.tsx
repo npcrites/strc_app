@@ -10,12 +10,13 @@ import {
   Animated,
   Share,
   Platform,
+  Dimensions,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import AnimatedNumbers from 'react-native-animated-numbers';
 import ViewShot from 'react-native-view-shot';
@@ -66,8 +67,23 @@ export default function AssetDetailScreen() {
   const route = useRoute<AssetDetailRouteProp>();
   const insets = useSafeAreaInsets();
   
+  // Calculate responsive scale factor (base: 375px iPhone standard)
+  const screenWidth = Dimensions.get('window').width;
+  const scaleFactor = screenWidth / 375;
+  
+  // Responsive spacing values (base values scale with screen size)
+  const SPACING_CHART_TO_SELECTOR = Math.round(4 * scaleFactor);
+  const SPACING_SELECTOR_TO_HOLDINGS = Math.round(2 * scaleFactor);
+  const SPACING_CARD_TOP = Math.round(20 * scaleFactor);
+  const SPACING_CARD_BOTTOM = Math.round(20 * scaleFactor);
+  
   // Initialize styles early so they're available for early returns
-  const styles = useMemo(() => createStyles(getColors(isDark), isDark), [isDark]);
+  const styles = useMemo(() => createStyles(getColors(isDark), isDark, {
+    chartToSelector: SPACING_CHART_TO_SELECTOR,
+    selectorToHoldings: SPACING_SELECTOR_TO_HOLDINGS,
+    cardTop: SPACING_CARD_TOP,
+    cardBottom: SPACING_CARD_BOTTOM,
+  }), [isDark, SPACING_CHART_TO_SELECTOR, SPACING_SELECTOR_TO_HOLDINGS, SPACING_CARD_TOP, SPACING_CARD_BOTTOM]);
   
   // Font size constants for responsive alignment
   const PRICE_FONT_SIZE = 42;
@@ -89,6 +105,15 @@ export default function AssetDetailScreen() {
   const [holdings, setHoldings] = useState<Holdings | null>(null);
   const [holdingsLoading, setHoldingsLoading] = useState(false);
   const [scrollEnabled, setScrollEnabled] = useState(true);
+  const [showBuySellModal, setShowBuySellModal] = useState(false);
+  const [buySellMode, setBuySellMode] = useState<'buy' | 'sell'>('buy');
+  const [showTradeScrim, setShowTradeScrim] = useState(false);
+  const [showBuySellButtons, setShowBuySellButtons] = useState(false);
+  const [showTradeButtonX, setShowTradeButtonX] = useState(false);
+  const scrimOpacity = useRef(new Animated.Value(0)).current;
+  
+  // Animated value for top bar ticker opacity (fades in on scroll)
+  const topBarTickerOpacity = useRef(new Animated.Value(0)).current;
 
   // Ensure header is never shown (prevents default back arrow from appearing)
   useLayoutEffect(() => {
@@ -113,6 +138,10 @@ export default function AssetDetailScreen() {
   const fadeOutTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [priceColor, setPriceColor] = useState<string>(getColors(isDark).textPrimary);
   const chartViewShotRef = useRef<ViewShot>(null);
+  const holdingsSectionRef = useRef<any>(null);
+  const dividerRef = useRef<any>(null);
+  const [holdingsSectionBottom, setHoldingsSectionBottom] = useState<number | null>(null);
+  const [dividerTop, setDividerTop] = useState<number | null>(null);
 
   const timeRangeMap: Record<TimeRange, string> = {
     '1W': '1W',
@@ -246,6 +275,84 @@ export default function AssetDetailScreen() {
 
     fetchHoldings();
   }, [token, ticker]);
+
+  // Calculate dividend yield - reactive to price changes
+  const dividendYield = useMemo(() => {
+    if (!holdings?.dividend_frequency) return null;
+    
+    // Debug logging
+    if (__DEV__) {
+      console.log('[DividendYield] Calculation debug:', {
+        ticker: holdings.ticker,
+        dividend_calculation_type: holdings.dividend_calculation_type,
+        fixed_dividend_per_share: holdings.fixed_dividend_per_share,
+        dividend_rate_percentage: holdings.dividend_rate_percentage,
+        dividend_frequency: holdings.dividend_frequency,
+        target_dividend_yield: holdings.target_dividend_yield,
+        current_price: data?.current_price,
+        has_series: !!data?.series,
+        series_length: data?.series?.length,
+      });
+    }
+    
+    // For fixed_dollar_per_share assets, ALWAYS calculate dynamically from current/last price
+    // NEVER use target_dividend_yield for these assets - it's variable based on price
+    if (holdings.dividend_calculation_type === 'fixed_dollar_per_share' && holdings.fixed_dividend_per_share) {
+      // Try current_price first, then fall back to last price in series (for after-hours scenarios)
+      let priceToUse: number | null = null;
+      
+      if (data?.current_price) {
+        priceToUse = data.current_price;
+      } else if (data?.series && data.series.length > 0) {
+        // Use the last price from the series (most recent price point)
+        const lastPricePoint = data.series[data.series.length - 1];
+        priceToUse = lastPricePoint.price;
+      }
+      
+      if (priceToUse) {
+        const multipliers: Record<string, number> = { 'monthly': 12, 'quarterly': 4, 'semi-annually': 2, 'annually': 1 };
+        const periodsPerYear = multipliers[holdings.dividend_frequency] || 4;
+        const annualDividend = holdings.fixed_dividend_per_share * periodsPerYear;
+        const calculatedYield = (annualDividend / priceToUse) * 100;
+        
+        if (__DEV__) {
+          console.log('[DividendYield] Calculated yield:', {
+            annualDividend,
+            priceToUse,
+            calculatedYield,
+            periodsPerYear,
+          });
+        }
+        
+        return calculatedYield;
+      }
+      
+      // If no price available yet, return null (will show "--")
+      if (__DEV__) {
+        console.log('[DividendYield] No price available for calculation');
+      }
+      return null;
+    }
+    
+    // For fixed_percentage_rate assets, use the rate directly
+    if (holdings.dividend_calculation_type === 'fixed_percentage_rate' && holdings.dividend_rate_percentage) {
+      return holdings.dividend_rate_percentage;
+    }
+    
+    // Fallback to target_dividend_yield ONLY for assets that don't have a calculation type set
+    // (This handles legacy data or assets without metadata)
+    if (holdings.target_dividend_yield && !holdings.dividend_calculation_type) {
+      if (__DEV__) {
+        console.log('[DividendYield] Using fallback target_dividend_yield:', holdings.target_dividend_yield);
+      }
+      return holdings.target_dividend_yield;
+    }
+    
+    if (__DEV__) {
+      console.log('[DividendYield] No yield calculated, returning null');
+    }
+    return null;
+  }, [holdings?.dividend_calculation_type, holdings?.fixed_dividend_per_share, holdings?.dividend_frequency, holdings?.dividend_rate_percentage, holdings?.target_dividend_yield, data?.current_price, data?.series]);
 
   // Convert price history to chart format using optimized transformation
   // Uses efficient single-pass transformation for better performance
@@ -406,6 +513,38 @@ export default function AssetDetailScreen() {
     };
   }, [currentPrice, colorOpacityAnim, leftmostChangePosition, isIncrease, data]);
 
+  // Handle holdings container layout to measure its bottom position (including margins)
+  const handleHoldingsLayout = (event: any) => {
+    const { y, height, pageY } = event.nativeEvent.layout;
+    // Calculate bottom position: pageY + height (this includes marginBottom)
+    if (pageY !== undefined && pageY !== null && height !== undefined) {
+      setHoldingsSectionBottom(pageY + height);
+    } else {
+      // Fallback: measure the ref if pageY is not available
+      holdingsSectionRef.current?.measure((x, y, width, height, pageX, pageY) => {
+        if (pageY !== undefined && pageY !== null && height !== undefined) {
+          setHoldingsSectionBottom(pageY + height);
+        }
+      });
+    }
+  };
+
+  // Handle divider layout to measure its position (kept for potential future use)
+  const handleDividerLayout = (event: any) => {
+    const { y, pageY } = event.nativeEvent.layout;
+    // Use pageY to get absolute position relative to the screen
+    if (pageY !== undefined && pageY !== null) {
+      setDividerTop(pageY);
+    } else {
+      // Fallback: measure the ref if pageY is not available
+      dividerRef.current?.measure((x, y, width, height, pageX, pageY) => {
+        if (pageY !== undefined && pageY !== null) {
+          setDividerTop(pageY);
+        }
+      });
+    }
+  };
+
   // Share handler - defined early so it can be used in early returns
   const handleShare = async () => {
     if (!data || !token) return;
@@ -513,9 +652,10 @@ export default function AssetDetailScreen() {
   // For timeframe/mode changes, we preserve old data and show animation instead
   if (loading && !data && !previousDataRef.current) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.container}>
         <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-        <View style={styles.topBar}>
+        {/* Top Bar - Back Button and Export Button - Fixed at top */}
+        <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
           <BackButton onPress={() => navigation.goBack()} />
           <ExportButton onPress={handleShare} />
         </View>
@@ -529,9 +669,10 @@ export default function AssetDetailScreen() {
 
   if (error) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.container}>
         <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-        <View style={styles.topBar}>
+        {/* Top Bar - Back Button and Export Button - Fixed at top */}
+        <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
           <BackButton onPress={() => navigation.goBack()} />
           <ExportButton onPress={handleShare} />
         </View>
@@ -553,9 +694,10 @@ export default function AssetDetailScreen() {
 
   if (!data) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.container}>
         <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-        <View style={styles.topBar}>
+        {/* Top Bar - Back Button and Export Button - Fixed at top */}
+        <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
           <BackButton onPress={() => navigation.goBack()} />
           <ExportButton onPress={handleShare} />
         </View>
@@ -572,20 +714,47 @@ export default function AssetDetailScreen() {
   const isPositive = priceChange >= 0;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={styles.container}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+      {/* Top Bar - Back Button, Ticker, and Export Button - Fixed at top */}
+      <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
+        <BackButton onPress={() => navigation.goBack()} />
+        <Animated.View 
+          style={[
+            styles.topBarTickerContainer, 
+            { 
+              opacity: topBarTickerOpacity,
+              top: insets.top + 12,
+              bottom: 12,
+            }
+          ]}
+        >
+          <Text style={styles.topBarTickerText}>{ticker}</Text>
+        </Animated.View>
+        <ExportButton onPress={handleShare} />
+      </View>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         scrollEnabled={scrollEnabled}
+        onScroll={(event) => {
+          const scrollY = event.nativeEvent.contentOffset.y;
+          // Fade in ticker when scrolled past 50px
+          const fadeStart = 50;
+          const fadeEnd = 150;
+          if (scrollY < fadeStart) {
+            topBarTickerOpacity.setValue(0);
+          } else if (scrollY > fadeEnd) {
+            topBarTickerOpacity.setValue(1);
+          } else {
+            // Linear interpolation between fadeStart and fadeEnd
+            const opacity = (scrollY - fadeStart) / (fadeEnd - fadeStart);
+            topBarTickerOpacity.setValue(opacity);
+          }
+        }}
+        scrollEventThrottle={16}
       >
-        {/* Top Bar - Back Button and Export Button */}
-        <View style={styles.topBar}>
-          <BackButton onPress={() => navigation.goBack()} />
-          <ExportButton onPress={handleShare} />
-        </View>
-
         {/* Main Card - Contains Header and Chart */}
         <ViewShot
           ref={chartViewShotRef}
@@ -819,18 +988,25 @@ export default function AssetDetailScreen() {
         </ViewShot>
 
         {/* Time Range Selector - Outside Card */}
-        <TimeRangeSelector
-          value={timeRange}
-          onChange={setTimeRange}
-        />
+        <View style={styles.timeRangeSelectorWrapper}>
+          <TimeRangeSelector
+            value={timeRange}
+            onChange={setTimeRange}
+          />
+        </View>
 
         {/* My Holdings Section - Show if user holds the asset OR has pending payout */}
         {holdings && (holdings.shares > 0 || (holdings.next_pay_date_adjusted || holdings.next_pay_date)) && (
-          <TouchableOpacity 
-            style={styles.holdingsContainer}
-            onPress={() => navigation.navigate('HoldingsDetail', { ticker })}
-            activeOpacity={0.7}
+          <View
+            style={styles.holdingsWrapper}
           >
+            <TouchableOpacity 
+              ref={holdingsSectionRef}
+              onLayout={handleHoldingsLayout}
+              style={styles.holdingsContainer}
+              onPress={() => navigation.navigate('HoldingsDetail', { ticker })}
+              activeOpacity={0.7}
+            >
             <View style={styles.holdingsHeader}>
               <Text style={styles.holdingsTitle}>My Holdings</Text>
               <Ionicons name="chevron-forward" size={20} color={getColors(isDark).textSecondary} />
@@ -852,11 +1028,16 @@ export default function AssetDetailScreen() {
               </View>
             </View>
           </TouchableOpacity>
+          </View>
         )}
 
         {/* Separator line between My Holdings and My Payouts */}
         {holdings && (holdings.shares > 0 || (holdings.next_pay_date_adjusted || holdings.next_pay_date)) && (holdings.next_pay_date_adjusted || holdings.next_pay_date) && (
-          <View style={styles.sectionDivider} />
+          <View 
+            ref={dividerRef}
+            onLayout={handleDividerLayout}
+            style={styles.sectionDivider} 
+          />
         )}
 
         {/* My Payouts Section - Show if user has upcoming payment (even if ex-date has passed or position is sold) */}
@@ -960,118 +1141,279 @@ export default function AssetDetailScreen() {
         )}
       </ScrollView>
 
-      {/* Floating Buy/Sell Buttons */}
-      <View
-        style={[
-          styles.bottomButtonContainer,
-          {
-            bottom: Math.max(insets.bottom, 12) + 16,
-          }
-        ]}
-      >
-        {Platform.OS === 'ios' ? (
-          <>
-            <BlurView
-              intensity={80}
-              tint="light"
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={{ zIndex: 1 }}>
-              <View style={styles.buttonRow}>
-                <TouchableOpacity
-                  style={styles.buyButton}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                    // TODO: Handle buy action
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={[getColors(isDark).green + 'E6', getColors(isDark).green + 'CC']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                  />
-                  <View style={styles.buttonTextContainer}>
-                    <Text style={styles.buttonText}>Buy</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.sellButton}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                    // TODO: Handle sell action
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={[getColors(isDark).red + 'E6', getColors(isDark).red + 'CC']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                  />
-                  <View style={styles.buttonTextContainer}>
-                    <Text style={styles.buttonText}>Sell</Text>
-                  </View>
-                </TouchableOpacity>
+      {/* Bottom Panel with Trade Button - Starts higher to extend further up the screen */}
+      {holdingsSectionBottom !== null && (
+        <View
+          style={[
+            styles.bottomPanel,
+            {
+              // Start higher (subtract 30px) to make panel extend further up
+              top: Math.max(holdingsSectionBottom - 30, 0),
+              bottom: 0,
+              zIndex: 10000, // Ensure bottom panel is above scrim overlay
+            }
+          ]}
+        >
+          {/* Scrim gradient fade - top 30% transparent, bottom 70% opaque */}
+          <LinearGradient
+            colors={[
+              getColors(isDark).background + '00', // Fully transparent at top (see-through)
+              getColors(isDark).background + '20', // 12% opacity
+              getColors(isDark).background + '40', // 25% opacity
+              getColors(isDark).background + '60', // 37% opacity
+              getColors(isDark).background + '80', // 50% opacity
+              getColors(isDark).background + 'A0', // 63% opacity
+              getColors(isDark).background + 'C0', // 75% opacity
+              getColors(isDark).background + 'D8', // 85% opacity
+              getColors(isDark).background + 'E8', // 91% opacity
+              getColors(isDark).background + 'F4', // 96% opacity
+              getColors(isDark).background + 'FF', // Fully opaque - gradual transition extends to 38%
+              getColors(isDark).background + 'FF', // Fully opaque continues to bottom
+            ]}
+            locations={[0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.33, 0.36, 0.37, 0.38, 1]} // Gradual fade extends to 38% before fully opaque
+            style={styles.bottomPanelGradient}
+            pointerEvents="none"
+          />
+          <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: Math.max(insets.bottom, 12) + 16, paddingHorizontal: 20, paddingTop: 12, zIndex: 2 }}>
+            {/* Dividend info and Trade button side by side */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              {/* Left-aligned dividend info - Always rendered to keep position fixed */}
+              <View style={{ alignItems: 'flex-start', minWidth: 120 }}>
+                {holdings?.dividend_frequency && (() => {
+                  const colors = getColors(isDark);
+                  
+                  return (
+                    <>
+                      <Text style={[styles.dividendFrequencyText, { color: colors.textSecondary }]}>
+                        Paid {holdings.dividend_frequency === 'monthly' ? 'Monthly' : 
+                              holdings.dividend_frequency === 'quarterly' ? 'Quarterly' : 
+                              holdings.dividend_frequency === 'semi-annually' ? 'Semi-Annually' :
+                              holdings.dividend_frequency === 'annually' ? 'Annually' :
+                              holdings.dividend_frequency.charAt(0).toUpperCase() + holdings.dividend_frequency.slice(1)}
+                      </Text>
+                      <Text style={[styles.dividendYieldText, { color: colors.textPrimary }]}>
+                        {dividendYield !== null ? dividendYield.toFixed(1) : '--'}%
+                      </Text>
+                    </>
+                  );
+                })()}
+              </View>
+              
+              {/* Right-aligned Trade/Buy button */}
+              <View style={styles.tradeButtonWrapper}>
+                {showTradeButtonX ? (
+                  <TouchableOpacity
+                    style={styles.tradeButtonX}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      // Hide buttons and X button immediately
+                      setShowBuySellButtons(false);
+                      setShowTradeButtonX(false);
+                      // Fade out scrim independently
+                      Animated.timing(scrimOpacity, {
+                        toValue: 0,
+                        duration: 200,
+                        useNativeDriver: true,
+                      }).start(() => {
+                        setShowTradeScrim(false);
+                      });
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View style={styles.buttonTextContainer}>
+                      <Ionicons name="close" size={20} color={getColors(isDark).orange} />
+                    </View>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.tradeButton}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                      // Check if user has a position (shares > 0)
+                      const hasPosition = position && position.shares > 0;
+                      if (hasPosition) {
+                        // Show scrim overlay for Trade button with fade animation
+                        setShowTradeScrim(true);
+                        setShowBuySellButtons(true);
+                        setShowTradeButtonX(true);
+                        Animated.timing(scrimOpacity, {
+                          toValue: 1,
+                          duration: 200,
+                          useNativeDriver: true,
+                        }).start();
+                      } else {
+                        // Show Buy modal for users without positions
+                        setBuySellMode('buy');
+                        setShowBuySellModal(true);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <LinearGradient
+                      colors={[getColors(isDark).orange + 'FF', getColors(isDark).orange + 'E6']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={StyleSheet.absoluteFill}
+                    />
+                    <View style={styles.buttonTextContainer}>
+                      <Text style={styles.buttonText}>
+                        {position && position.shares > 0 ? 'Trade' : 'Buy'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
-          </>
-        ) : (
-          <>
-            {!isDark && (
-              <BlurView
-                intensity={40}
-                tint="light"
-                style={StyleSheet.absoluteFill}
-              />
-            )}
-            <View style={styles.buttonRow}>
+          </View>
+        </View>
+      )}
+
+      {/* Buy and Sell buttons - Outside bottom panel to prevent clipping */}
+      {showBuySellButtons && holdingsSectionBottom !== null && (
+        <View 
+          style={[
+            styles.buySellButtonsContainer,
+            {
+              bottom: Math.max(insets.bottom, 12) + 16 + 50 + 12, // Position above X button with more spacing
+              right: 20, // Match padding from bottom panel
+            }
+          ]}
+        >
+          {/* Buy button - top */}
+          <TouchableOpacity
+            style={styles.buySellButton}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+              Animated.timing(scrimOpacity, {
+                toValue: 0,
+                duration: 200,
+                useNativeDriver: true,
+              }).start(() => {
+                setShowTradeScrim(false);
+                setBuySellMode('buy');
+                setShowBuySellModal(true);
+              });
+            }}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={[getColors(isDark).orange + 'FF', getColors(isDark).orange + 'E6']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.buttonTextContainer}>
+              <Text style={styles.buttonText}>Buy</Text>
+            </View>
+          </TouchableOpacity>
+          
+          {/* Sell button - bottom */}
+          <TouchableOpacity
+            style={[styles.buySellButton, { marginTop: 12 }]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+              Animated.timing(scrimOpacity, {
+                toValue: 0,
+                duration: 200,
+                useNativeDriver: true,
+              }).start(() => {
+                setShowTradeScrim(false);
+                setBuySellMode('sell');
+                setShowBuySellModal(true);
+              });
+            }}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={[getColors(isDark).orange + 'FF', getColors(isDark).orange + 'E6']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.buttonTextContainer}>
+              <Text style={styles.buttonText}>Sell</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Trade Scrim Overlay */}
+      {showTradeScrim && (
+        <Animated.View 
+          style={[
+            styles.tradeScrimContainer, 
+            { opacity: scrimOpacity }
+          ]} 
+          pointerEvents="box-none"
+        >
+          <TouchableOpacity
+            style={styles.tradeScrimOverlay}
+            activeOpacity={1}
+            onPress={() => {
+              // Hide buttons and X button immediately
+              setShowBuySellButtons(false);
+              setShowTradeButtonX(false);
+              // Fade out scrim independently
+              Animated.timing(scrimOpacity, {
+                toValue: 0,
+                duration: 200,
+                useNativeDriver: true,
+              }).start(() => {
+                setShowTradeScrim(false);
+              });
+            }}
+          />
+        </Animated.View>
+      )}
+
+      {/* Buy/Sell Modal */}
+      <Modal
+        visible={showBuySellModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowBuySellModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowBuySellModal(false)}
+          />
+          <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {buySellMode === 'buy' ? 'Buy' : 'Sell'} {ticker}
+              </Text>
               <TouchableOpacity
-                style={styles.buyButton}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                  // TODO: Handle buy action
-                }}
-                activeOpacity={0.8}
+                onPress={() => setShowBuySellModal(false)}
+                style={styles.modalCloseButton}
               >
-                <LinearGradient
-                  colors={[getColors(isDark).green + 'E6', getColors(isDark).green + 'CC']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <View style={styles.buttonTextContainer}>
-                  <Text style={styles.buttonText}>Buy</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.sellButton}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                  // TODO: Handle sell action
-                }}
-                activeOpacity={0.8}
-              >
-                <LinearGradient
-                  colors={[getColors(isDark).red + 'E6', getColors(isDark).red + 'CC']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <View style={styles.buttonTextContainer}>
-                  <Text style={styles.buttonText}>Sell</Text>
-                </View>
+                <Ionicons name="close" size={24} color={getColors(isDark).textPrimary} />
               </TouchableOpacity>
             </View>
-          </>
-        )}
-      </View>
+            <View style={styles.modalBody}>
+              <Text style={styles.modalPlaceholder}>
+                Buy/Sell functionality coming soon...
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => StyleSheet.create({
+const createStyles = (
+  colors: ReturnType<typeof getColors>, 
+  isDark: boolean,
+  spacing: {
+    chartToSelector: number;
+    selectorToHoldings: number;
+    cardTop: number;
+    cardBottom: number;
+  }
+) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background, // Warm dark background in dark mode
@@ -1080,21 +1422,36 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 120, // Extra padding for floating buttons
+    paddingBottom: 200, // Extra padding for bottom panel (ensures content can scroll past it)
   },
   topBar: {
     paddingHorizontal: 20,
-    paddingTop: 16,
     paddingBottom: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    position: 'relative',
+  },
+  topBarTickerContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'none', // Allow touches to pass through to buttons
+  },
+  topBarTickerText: {
+    fontSize: 16,
+    fontWeight: '600',
+    fontFamily: 'Inter-SemiBold',
+    color: colors.textPrimary,
   },
   mainCard: {
     backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : 'rgba(255, 255, 255, 0.95)', // Semi-transparent white in light mode
     borderRadius: 16,
     marginHorizontal: 20,
-    marginBottom: 20,
+    marginTop: spacing.cardTop,
+    marginBottom: spacing.cardBottom,
     overflow: 'hidden',
     // Glass-like border (only in dark mode)
     borderWidth: isDark ? 1 : 0,
@@ -1350,9 +1707,15 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
   positionValueNegative: {
     color: isDark ? '#F44336' : '#C62828',
   },
+  holdingsWrapper: {
+    marginTop: spacing.selectorToHoldings,
+  },
   holdingsContainer: {
     paddingHorizontal: 20,
     marginBottom: 20,
+  },
+  timeRangeSelectorWrapper: {
+    marginTop: spacing.chartToSelector,
   },
   holdingsHeader: {
     flexDirection: 'row',
@@ -1506,80 +1869,47 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     fontFamily: 'Inter-SemiBold',
     color: colors.backgroundWhite,
   },
-  bottomButtonContainer: {
+  bottomPanel: {
     position: 'absolute',
-    left: 16,
-    right: 16,
-    backgroundColor: isDark 
-      ? (Platform.OS === 'ios' ? 'transparent' : colors.backgroundWhite)
-      : 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 35,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    left: 0,
+    right: 0,
+    backgroundColor: 'transparent', // Transparent so content shows through at top
     overflow: 'hidden',
-    ...(isDark ? {
-      shadowColor: '#000',
-      shadowOffset: {
-        width: 0,
-        height: 2,
-      },
-      shadowOpacity: Platform.OS === 'ios' ? 0.08 : 0.05,
-      shadowRadius: Platform.OS === 'ios' ? 6 : 4,
-      elevation: 4,
-    } : {
-      shadowColor: '#FFFFFF',
-      shadowOffset: {
-        width: -4,
-        height: -4,
-      },
-      shadowOpacity: 0.7,
-      shadowRadius: 8,
-      elevation: 0,
-      overflow: 'hidden',
-    }),
+    zIndex: 10000, // Very high z-index to ensure it's above scrim overlay
   },
-  buttonRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  bottomPanelGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0, // Cover entire panel height for full fade effect
+    zIndex: 1,
   },
-  buyButton: {
-    flex: 1,
+  tradeButtonWrapper: {
+    width: '50%',
+    alignSelf: 'flex-end',
+    position: 'relative',
+    zIndex: 10001, // Ensure buttons are above everything
+    // Subtle underglow effect with orange glow
+    shadowColor: isDark ? colors.orange : '#FF6B35', // Orange glow color
+    shadowOffset: {
+      width: 0,
+      height: 4, // Small offset for subtle glow
+    },
+    shadowOpacity: isDark ? 0.3 : 0.25, // Lower opacity for more subtle glow
+    shadowRadius: 8, // Smaller radius for tighter glow
+    elevation: 6, // Lower elevation for Android
+  },
+  tradeButton: {
+    width: '100%',
     paddingVertical: 14,
     paddingHorizontal: 22,
-    borderRadius: 30,
+    borderRadius: 9999, // Fully rounded pill shape
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 50,
     position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  sellButton: {
-    flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 22,
-    borderRadius: 30,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 50,
-    position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 4,
   },
   buttonTextContainer: {
     position: 'absolute',
@@ -1596,6 +1926,129 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     fontWeight: '600',
     color: '#FFFFFF',
     textAlign: 'center',
+  },
+  buySellButtonsContainer: {
+    width: (Dimensions.get('window').width - 40) * 0.5, // Match tradeButtonWrapper width exactly (screen width - padding * 2) / 2
+    position: 'absolute',
+    zIndex: 10001, // Above scrim, same level as bottom panel
+    alignItems: 'flex-end', // Align buttons to the right
+    flexDirection: 'column', // Stack buttons vertically
+    overflow: 'visible', // Allow buttons to be visible
+    // Shadow matching tradeButtonWrapper
+    shadowColor: isDark ? colors.orange : '#FF6B35',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: isDark ? 0.3 : 0.25,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  buySellButton: {
+    width: '100%',
+    maxWidth: '100%', // Ensure button doesn't exceed container width
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    borderRadius: 9999, // Fully rounded pill shape - same as tradeButton
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 50,
+    position: 'relative',
+  },
+  tradeButtonX: {
+    width: '100%',
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    borderRadius: 9999,
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: colors.orange,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 50,
+    position: 'relative',
+  },
+  dividendFrequencyText: {
+    fontSize: 12,
+    fontWeight: '500',
+    fontFamily: 'Inter-Medium',
+    marginBottom: 2,
+  },
+  dividendYieldText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
+  },
+  tradeScrimContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 9999, // Below bottom panel but above everything else
+  },
+  tradeScrimOverlay: {
+    flex: 1,
+    backgroundColor: isDark ? 'rgba(0, 0, 0, 0.9)' : 'rgba(255, 255, 255, 0.95)',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  modalContent: {
+    backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : 'rgba(255, 255, 255, 0.95)',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    paddingHorizontal: 20,
+    maxHeight: '80%',
+    // Glass-like border (only in dark mode)
+    borderWidth: isDark ? 1 : 0,
+    borderColor: isDark ? ((colors as any).glassBorder || colors.border) : 'transparent',
+    borderBottomWidth: 0,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: colors.textSecondary,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 20,
+    opacity: 0.3,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    fontFamily: 'ChakraPetch-Bold',
+    color: colors.textPrimary,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBody: {
+    flex: 1,
+    paddingBottom: 20,
+  },
+  modalPlaceholder: {
+    fontSize: 16,
+    fontFamily: 'Inter-Medium',
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 40,
   },
 });
 
