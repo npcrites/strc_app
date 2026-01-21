@@ -3,6 +3,7 @@ package com.dashboardapp.app
 import android.app.Application
 import android.content.res.Configuration
 
+import com.dashboardapp.BuildConfig
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative

@@ -3,6 +3,8 @@ package com.dashboardapp.app
 import android.os.Build
 import android.os.Bundle
 
+import com.dashboardapp.BuildConfig
+import com.dashboardapp.R
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled

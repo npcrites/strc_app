@@ -177,10 +177,35 @@ class ApiService {
       return data;
     } catch (error) {
       console.error('API fetch error:', error);
+      
+      // Handle network errors specifically
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        const networkError = new Error(
+          `Network request failed: Could not connect to ${this.baseUrl}\n\n` +
+          `Troubleshooting:\n` +
+          `1. Is the backend server running? (cd backend && ./start_server.sh)\n` +
+          `2. Are you on the same WiFi network?\n` +
+          `3. Check the API URL in console logs above\n` +
+          `4. Try: curl ${this.baseUrl.replace('/api', '')}/health`
+        );
+        (networkError as any).isNetworkError = true;
+        throw networkError;
+      }
+      
+      // Handle AbortError (timeout or cancelled)
+      if (error instanceof Error && error.name === 'AbortError') {
+        const abortError = new Error('Request was cancelled or timed out');
+        (abortError as any).isNetworkError = true;
+        throw abortError;
+      }
+      
+      // Re-throw if it's already an Error with a message
       if (error instanceof Error) {
         throw error;
       }
-      throw new Error('Network error: Failed to fetch data');
+      
+      // Fallback for unknown errors
+      throw new Error(`Network error: ${String(error)}`);
     }
   }
 
@@ -193,36 +218,53 @@ class ApiService {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(data),
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(data),
+      });
 
-    if (!response.ok) {
-      // Handle 401 Unauthorized
-      if (response.status === 401 && token) {
-        try {
-          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          await AsyncStorage.removeItem('auth_token');
-          if ((global as any).handle401Error) {
-            (global as any).handle401Error();
+      if (!response.ok) {
+        // Handle 401 Unauthorized
+        if (response.status === 401 && token) {
+          try {
+            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+            await AsyncStorage.removeItem('auth_token');
+            if ((global as any).handle401Error) {
+              (global as any).handle401Error();
+            }
+          } catch (storageError) {
+            console.error('Error clearing token:', storageError);
           }
-        } catch (storageError) {
-          console.error('Error clearing token:', storageError);
+          const error = new Error('AUTHENTICATION_EXPIRED');
+          (error as any).status = 401;
+          throw error;
         }
-        const error = new Error('AUTHENTICATION_EXPIRED');
-        (error as any).status = 401;
-        throw error;
+        
+        const error: ApiError = await response.json().catch(() => ({ 
+          detail: response.statusText 
+        }));
+        throw new Error(error.detail || `API Error: ${response.statusText}`);
       }
-      
-      const error: ApiError = await response.json().catch(() => ({ 
-        detail: response.statusText 
-      }));
-      throw new Error(error.detail || `API Error: ${response.statusText}`);
-    }
 
-    return await response.json();
+      return await response.json();
+    } catch (error) {
+      // Handle network errors
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        const networkError = new Error(
+          `Network request failed: Could not connect to ${this.baseUrl}\n\n` +
+          `Troubleshooting:\n` +
+          `1. Is the backend server running? (cd backend && ./start_server.sh)\n` +
+          `2. Are you on the same WiFi network?\n` +
+          `3. Check the API URL in console logs above\n` +
+          `4. Try: curl ${this.baseUrl.replace('/api', '')}/health`
+        );
+        (networkError as any).isNetworkError = true;
+        throw networkError;
+      }
+      throw error;
+    }
   }
 
   async put<T>(endpoint: string, data: any, token: string | null = null): Promise<T> {
@@ -234,36 +276,53 @@ class ApiService {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify(data),
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(data),
+      });
 
-    if (!response.ok) {
-      // Handle 401 Unauthorized
-      if (response.status === 401 && token) {
-        try {
-          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          await AsyncStorage.removeItem('auth_token');
-          if ((global as any).handle401Error) {
-            (global as any).handle401Error();
+      if (!response.ok) {
+        // Handle 401 Unauthorized
+        if (response.status === 401 && token) {
+          try {
+            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+            await AsyncStorage.removeItem('auth_token');
+            if ((global as any).handle401Error) {
+              (global as any).handle401Error();
+            }
+          } catch (storageError) {
+            console.error('Error clearing token:', storageError);
           }
-        } catch (storageError) {
-          console.error('Error clearing token:', storageError);
+          const error = new Error('AUTHENTICATION_EXPIRED');
+          (error as any).status = 401;
+          throw error;
         }
-        const error = new Error('AUTHENTICATION_EXPIRED');
-        (error as any).status = 401;
-        throw error;
+        
+        const error: ApiError = await response.json().catch(() => ({ 
+          detail: response.statusText 
+        }));
+        throw new Error(error.detail || `API Error: ${response.statusText}`);
       }
-      
-      const error: ApiError = await response.json().catch(() => ({ 
-        detail: response.statusText 
-      }));
-      throw new Error(error.detail || `API Error: ${response.statusText}`);
-    }
 
-    return await response.json();
+      return await response.json();
+    } catch (error) {
+      // Handle network errors
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        const networkError = new Error(
+          `Network request failed: Could not connect to ${this.baseUrl}\n\n` +
+          `Troubleshooting:\n` +
+          `1. Is the backend server running? (cd backend && ./start_server.sh)\n` +
+          `2. Are you on the same WiFi network?\n` +
+          `3. Check the API URL in console logs above\n` +
+          `4. Try: curl ${this.baseUrl.replace('/api', '')}/health`
+        );
+        (networkError as any).isNetworkError = true;
+        throw networkError;
+      }
+      throw error;
+    }
   }
 
   async delete<T>(endpoint: string, token: string | null = null): Promise<T> {
@@ -275,35 +334,52 @@ class ApiService {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'DELETE',
-      headers,
-    });
+    try {
+      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'DELETE',
+        headers,
+      });
 
-    if (!response.ok) {
-      // Handle 401 Unauthorized
-      if (response.status === 401 && token) {
-        try {
-          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          await AsyncStorage.removeItem('auth_token');
-          if ((global as any).handle401Error) {
-            (global as any).handle401Error();
+      if (!response.ok) {
+        // Handle 401 Unauthorized
+        if (response.status === 401 && token) {
+          try {
+            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+            await AsyncStorage.removeItem('auth_token');
+            if ((global as any).handle401Error) {
+              (global as any).handle401Error();
+            }
+          } catch (storageError) {
+            console.error('Error clearing token:', storageError);
           }
-        } catch (storageError) {
-          console.error('Error clearing token:', storageError);
+          const error = new Error('AUTHENTICATION_EXPIRED');
+          (error as any).status = 401;
+          throw error;
         }
-        const error = new Error('AUTHENTICATION_EXPIRED');
-        (error as any).status = 401;
-        throw error;
+        
+        const error: ApiError = await response.json().catch(() => ({ 
+          detail: response.statusText 
+        }));
+        throw new Error(error.detail || `API Error: ${response.statusText}`);
       }
-      
-      const error: ApiError = await response.json().catch(() => ({ 
-        detail: response.statusText 
-      }));
-      throw new Error(error.detail || `API Error: ${response.statusText}`);
-    }
 
-    return await response.json();
+      return await response.json();
+    } catch (error) {
+      // Handle network errors
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        const networkError = new Error(
+          `Network request failed: Could not connect to ${this.baseUrl}\n\n` +
+          `Troubleshooting:\n` +
+          `1. Is the backend server running? (cd backend && ./start_server.sh)\n` +
+          `2. Are you on the same WiFi network?\n` +
+          `3. Check the API URL in console logs above\n` +
+          `4. Try: curl ${this.baseUrl.replace('/api', '')}/health`
+        );
+        (networkError as any).isNetworkError = true;
+        throw networkError;
+      }
+      throw error;
+    }
   }
 }
 

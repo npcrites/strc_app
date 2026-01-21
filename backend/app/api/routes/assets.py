@@ -2073,6 +2073,30 @@ async def get_asset_price_history(
         # Get all snapshots
         snapshots = query.all()
         
+        # Additional safety filter: exclude snapshots from non-trading days
+        # This ensures we never include data from weekends/holidays even if they slip through the time range filter
+        if trading_hours_mode == "market":
+            filtered_snapshots = []
+            excluded_non_trading_day_snapshots = []
+            for snap in snapshots:
+                snap_timestamp = snap[0]
+                snap_et = market_hours_service._to_et(snap_timestamp)
+                snap_et_date = snap_et.date()
+                
+                # Only include trading days
+                if market_hours_service.is_trading_day(snap_et_date):
+                    filtered_snapshots.append(snap)
+                else:
+                    excluded_non_trading_day_snapshots.append((snap_et_date, snap_timestamp))
+            
+            if excluded_non_trading_day_snapshots:
+                logger.info(
+                    f"Excluded {len(excluded_non_trading_day_snapshots)} snapshots from non-trading days for {ticker_upper} "
+                    f"(sample dates: {[d.strftime('%Y-%m-%d') for d, _ in excluded_non_trading_day_snapshots[:5]]})"
+                )
+            
+            snapshots = filtered_snapshots
+        
         logger.info(
             f"Time range filter for {ticker_upper} ({time_range}, {trading_hours_mode}): "
             f"start={tr.start_date}, end={tr.end_date}, "

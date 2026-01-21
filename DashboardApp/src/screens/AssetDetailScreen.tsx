@@ -192,7 +192,12 @@ export default function AssetDetailScreen() {
         previousTimeRangeRef.current = timeRange;
       } catch (err: any) {
         console.error('Error fetching asset price history:', err);
-        setError(err.message || 'Failed to load asset data');
+        // Check if it's a network error with helpful troubleshooting info
+        if (err.isNetworkError || (err instanceof TypeError && err.message.includes('fetch'))) {
+          setError(err.message || 'Network request failed. Check console for details.');
+        } else {
+          setError(err.message || 'Failed to load asset data');
+        }
       } finally {
         setLoading(false);
       }
@@ -596,14 +601,26 @@ export default function AssetDetailScreen() {
       } as any);
       formData.append('ticker', ticker);
       
-      const uploadResponse = await fetch(`${api.baseUrl}/assets/share-image`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
-        },
-        body: formData,
-      });
+      let uploadResponse: Response;
+      try {
+        uploadResponse = await fetch(`${api.baseUrl}/assets/share-image`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data',
+          },
+          body: formData,
+        });
+      } catch (fetchError) {
+        // Network error - fall back to sharing image directly
+        console.error('Network error uploading image:', fetchError);
+        await Share.share({
+          message: `${assetName} (${ticker})\n${priceText}\n${changeText}`,
+          url: imageUri,
+          title: `${ticker} Price`,
+        });
+        return;
+      }
       
       if (!uploadResponse.ok) {
         const errorText = await uploadResponse.text();
@@ -677,7 +694,9 @@ export default function AssetDetailScreen() {
           <ExportButton onPress={handleShare} />
         </View>
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{error}</Text>
+          <Text style={styles.errorText} numberOfLines={10} ellipsizeMode="tail">
+            {error}
+          </Text>
           <TouchableOpacity
             style={styles.retryButton}
             onPress={() => {

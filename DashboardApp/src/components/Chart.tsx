@@ -184,11 +184,117 @@ function useChartData(
     // This ensures no data from weekends or holidays (like Jan 1st) appears
     // Market closes at 4:00 PM ET and opens at 9:30 AM ET on trading days only
     if (tradingHoursMode === 'market') {
+      const now = Date.now();
+      const todayET = new Date(now);
+      const todayETStr = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        month: 'numeric',
+        day: 'numeric',
+        year: 'numeric',
+      }).format(todayET);
+      const isTodayTradingDay = isTradingDayInET(now);
+      
       filtered = filtered.filter(point => {
         const timestamp = typeof point.x === 'string' ? new Date(point.x).getTime() : point.x;
-        // Only include data from trading days (weekdays in ET)
-        return isTradingDayInET(timestamp);
+        
+        // Exclude any data points from today or in the future
+        // Get the date string in ET for this point
+        const pointETStr = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York',
+          month: 'numeric',
+          day: 'numeric',
+          year: 'numeric',
+        }).format(new Date(timestamp));
+        
+        // Parse date strings to compare properly (format: "M/D/YYYY")
+        const [pointMonth, pointDay, pointYear] = pointETStr.split('/').map(Number);
+        const [todayMonth, todayDay, todayYear] = todayETStr.split('/').map(Number);
+        
+        // Exclude any data points from today (regardless of trading day status)
+        // In market hours mode, we only want to show finalized historical data
+        // This ensures we don't show partial/incomplete data from today
+        const isToday = 
+          pointYear === todayYear &&
+          pointMonth === todayMonth &&
+          pointDay === todayDay;
+        
+        if (isToday) {
+          if (__DEV__) {
+            console.log('[Chart] Filtering out data point from today (market hours mode only shows historical data):', {
+              timestamp: new Date(timestamp).toISOString(),
+              pointETStr,
+              todayETStr,
+              pointDate: new Date(timestamp).toLocaleString('en-US', { timeZone: 'America/New_York' }),
+              weekday: new Intl.DateTimeFormat('en-US', {
+                timeZone: 'America/New_York',
+                weekday: 'short',
+              }).format(new Date(timestamp)),
+            });
+          }
+          return false;
+        }
+        
+        // Also exclude future dates (safety check)
+        const isFuture = 
+          pointYear > todayYear ||
+          (pointYear === todayYear && pointMonth > todayMonth) ||
+          (pointYear === todayYear && pointMonth === todayMonth && pointDay > todayDay);
+        
+        if (isFuture) {
+          if (__DEV__) {
+            console.log('[Chart] Filtering out data point from future:', {
+              timestamp: new Date(timestamp).toISOString(),
+              pointETStr,
+              todayETStr,
+            });
+          }
+          return false;
+        }
+        
+        // Check if this point is from a trading day
+        const isTradingDay = isTradingDayInET(timestamp);
+        if (!isTradingDay) {
+          if (__DEV__) {
+            console.log('[Chart] Filtering out data point from non-trading day:', {
+              timestamp: new Date(timestamp).toISOString(),
+              pointETStr,
+              weekday: new Intl.DateTimeFormat('en-US', {
+                timeZone: 'America/New_York',
+                weekday: 'short',
+              }).format(new Date(timestamp)),
+            });
+          }
+          return false;
+        }
+        
+        return true;
       });
+      
+      if (__DEV__) {
+        const removed = data.length - filtered.length;
+        if (removed > 0) {
+          console.log('[Chart] Filtered out non-trading day data points:', {
+            original: data.length,
+            filtered: filtered.length,
+            removed,
+            isTodayTradingDay,
+            todayETStr,
+            lastPoint: filtered.length > 0 ? {
+              timestamp: new Date(typeof filtered[filtered.length - 1].x === 'string' 
+                ? new Date(filtered[filtered.length - 1].x).getTime() 
+                : filtered[filtered.length - 1].x).toISOString(),
+              dateET: new Intl.DateTimeFormat('en-US', {
+                timeZone: 'America/New_York',
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+              }).format(new Date(typeof filtered[filtered.length - 1].x === 'string' 
+                ? new Date(filtered[filtered.length - 1].x).getTime() 
+                : filtered[filtered.length - 1].x)),
+            } : null,
+          });
+        }
+      }
     }
     
     return filtered;
