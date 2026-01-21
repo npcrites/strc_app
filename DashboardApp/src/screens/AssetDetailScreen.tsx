@@ -112,6 +112,11 @@ export default function AssetDetailScreen() {
   const [showTradeButtonX, setShowTradeButtonX] = useState(false);
   const scrimOpacity = useRef(new Animated.Value(0)).current;
   
+  // Animated values for Buy/Sell buttons flying out animation
+  const buyButtonTranslateY = useRef(new Animated.Value(0)).current;
+  const sellButtonTranslateY = useRef(new Animated.Value(0)).current;
+  const buySellButtonsOpacity = useRef(new Animated.Value(0)).current;
+  
   // Animated value for top bar ticker opacity (fades in on scroll)
   const topBarTickerOpacity = useRef(new Animated.Value(0)).current;
 
@@ -517,6 +522,64 @@ export default function AssetDetailScreen() {
       }
     };
   }, [currentPrice, colorOpacityAnim, leftmostChangePosition, isIncrease, data]);
+
+  // Animate Buy/Sell buttons flying out with bounce
+  useEffect(() => {
+    if (showBuySellButtons) {
+      // Reset to starting position (behind Trade button)
+      buyButtonTranslateY.setValue(0);
+      sellButtonTranslateY.setValue(0);
+      buySellButtonsOpacity.setValue(0);
+      
+      // Animate buttons flying out with bounce
+      // Both buttons fly up, with Sell above Buy
+      const buttonSpacing = 62; // 50px button height + 12px margin
+      
+      Animated.parallel([
+        // Buy button animation (flies up)
+        Animated.spring(buyButtonTranslateY, {
+          toValue: -buttonSpacing,
+          tension: 50, // Lower tension for more bounce
+          friction: 7, // Lower friction for more bounce
+          useNativeDriver: true,
+        }),
+        // Sell button animation (flies up even higher, above Buy)
+        Animated.spring(sellButtonTranslateY, {
+          toValue: -buttonSpacing * 2, // Double the distance, so it's above Buy
+          tension: 50,
+          friction: 7,
+          useNativeDriver: true,
+        }),
+        // Opacity fade in
+        Animated.timing(buySellButtonsOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      // Animate buttons back to center (behind Trade button)
+      Animated.parallel([
+        Animated.spring(buyButtonTranslateY, {
+          toValue: 0,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.spring(sellButtonTranslateY, {
+          toValue: 0,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+        Animated.timing(buySellButtonsOpacity, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [showBuySellButtons, buyButtonTranslateY, sellButtonTranslateY, buySellButtonsOpacity]);
 
   // Handle holdings container layout to measure its bottom position (including margins)
   const handleHoldingsLayout = (event: any) => {
@@ -1300,93 +1363,112 @@ export default function AssetDetailScreen() {
 
       {/* Buy and Sell buttons - Outside bottom panel to prevent clipping */}
       {showBuySellButtons && holdingsSectionBottom !== null && (
-        <View 
+        <Animated.View 
           style={[
             styles.buySellButtonsContainer,
             {
-              bottom: Math.max(insets.bottom, 12) + 16 + 50 + 12, // Position above X button with more spacing
+              bottom: Math.max(insets.bottom, 12) + 16 + 25, // Position at Trade button center (50px / 2 = 25px)
               right: 20, // Match padding from bottom panel
+              opacity: buySellButtonsOpacity,
             }
           ]}
         >
-          {/* Buy button - top */}
-          <TouchableOpacity
-            style={styles.buySellButton}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-              // On Android, immediately remove scrim from render tree to prevent visual blocking
-              if (Platform.OS === 'android') {
-                setShowTradeScrim(false);
-                setShowBuySellButtons(false);
-                setShowTradeButtonX(false);
-                scrimOpacity.setValue(0);
-                setBuySellMode('buy');
-                setShowBuySellModal(true);
-              } else {
-                // Fade out scrim independently on iOS
-                Animated.timing(scrimOpacity, {
-                  toValue: 0,
-                  duration: 200,
-                  useNativeDriver: true,
-                }).start(() => {
+          {/* Buy button - flies up */}
+          <Animated.View
+            style={[
+              styles.buySellButtonAbsolute,
+              {
+                transform: [{ translateY: buyButtonTranslateY }],
+              }
+            ]}
+          >
+            <TouchableOpacity
+              style={styles.buySellButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                // On Android, immediately remove scrim from render tree to prevent visual blocking
+                if (Platform.OS === 'android') {
                   setShowTradeScrim(false);
+                  setShowBuySellButtons(false);
+                  setShowTradeButtonX(false);
+                  scrimOpacity.setValue(0);
                   setBuySellMode('buy');
                   setShowBuySellModal(true);
-                });
-              }
-            }}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={[getColors(isDark).orange + 'FF', getColors(isDark).orange + 'E6']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.buttonTextContainer}>
-              <Text style={styles.buttonText}>Buy</Text>
-            </View>
-          </TouchableOpacity>
+                } else {
+                  // Fade out scrim independently on iOS
+                  Animated.timing(scrimOpacity, {
+                    toValue: 0,
+                    duration: 200,
+                    useNativeDriver: true,
+                  }).start(() => {
+                    setShowTradeScrim(false);
+                    setBuySellMode('buy');
+                    setShowBuySellModal(true);
+                  });
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={[getColors(isDark).orange + 'FF', getColors(isDark).orange + 'E6']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.buttonTextContainer}>
+                <Text style={styles.buttonText}>Buy</Text>
+              </View>
+            </TouchableOpacity>
+          </Animated.View>
           
-          {/* Sell button - bottom */}
-          <TouchableOpacity
-            style={[styles.buySellButton, { marginTop: 12 }]}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-              // On Android, immediately remove scrim from render tree to prevent visual blocking
-              if (Platform.OS === 'android') {
-                setShowTradeScrim(false);
-                setShowBuySellButtons(false);
-                setShowTradeButtonX(false);
-                scrimOpacity.setValue(0);
-                setBuySellMode('sell');
-                setShowBuySellModal(true);
-              } else {
-                // Fade out scrim independently on iOS
-                Animated.timing(scrimOpacity, {
-                  toValue: 0,
-                  duration: 200,
-                  useNativeDriver: true,
-                }).start(() => {
+          {/* Sell button - flies down */}
+          <Animated.View
+            style={[
+              styles.buySellButtonAbsolute,
+              {
+                transform: [{ translateY: sellButtonTranslateY }],
+              }
+            ]}
+          >
+            <TouchableOpacity
+              style={styles.buySellButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                // On Android, immediately remove scrim from render tree to prevent visual blocking
+                if (Platform.OS === 'android') {
                   setShowTradeScrim(false);
+                  setShowBuySellButtons(false);
+                  setShowTradeButtonX(false);
+                  scrimOpacity.setValue(0);
                   setBuySellMode('sell');
                   setShowBuySellModal(true);
-                });
-              }
-            }}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={[getColors(isDark).orange + 'FF', getColors(isDark).orange + 'E6']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View style={styles.buttonTextContainer}>
-              <Text style={styles.buttonText}>Sell</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
+                } else {
+                  // Fade out scrim independently on iOS
+                  Animated.timing(scrimOpacity, {
+                    toValue: 0,
+                    duration: 200,
+                    useNativeDriver: true,
+                  }).start(() => {
+                    setShowTradeScrim(false);
+                    setBuySellMode('sell');
+                    setShowBuySellModal(true);
+                  });
+                }
+              }}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={[getColors(isDark).orange + 'FF', getColors(isDark).orange + 'E6']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.buttonTextContainer}>
+                <Text style={styles.buttonText}>Sell</Text>
+              </View>
+            </TouchableOpacity>
+          </Animated.View>
+        </Animated.View>
       )}
 
       {/* Trade Scrim Overlay */}
@@ -1991,7 +2073,6 @@ const createStyles = (
     position: 'absolute',
     zIndex: 10001, // Above scrim, same level as bottom panel
     alignItems: 'flex-end', // Align buttons to the right
-    flexDirection: 'column', // Stack buttons vertically
     overflow: 'visible', // Allow buttons to be visible
     // Shadow matching tradeButtonWrapper
     shadowColor: isDark ? colors.orange : '#FF6B35',
@@ -2002,6 +2083,12 @@ const createStyles = (
     shadowOpacity: isDark ? 0.3 : 0.25,
     shadowRadius: 8,
     elevation: 6,
+  },
+  buySellButtonAbsolute: {
+    position: 'absolute',
+    width: '100%',
+    top: -25, // Center button on container (button height is 50px, so -25px centers it)
+    right: 0,
   },
   buySellButton: {
     width: '100%',
