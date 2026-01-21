@@ -1219,23 +1219,33 @@ export default function AssetDetailScreen() {
               </View>
               
               {/* Right-aligned Trade/Buy button */}
-              <View style={styles.tradeButtonWrapper}>
+              <View 
+                key={`trade-button-wrapper-${showTradeButtonX ? 'x' : 'trade'}-${showBuySellButtons ? 'open' : 'closed'}`}
+                style={styles.tradeButtonWrapper}
+              >
                 {showTradeButtonX ? (
                   <TouchableOpacity
+                    key="trade-button-x"
                     style={styles.tradeButtonX}
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       // Hide buttons and X button immediately
                       setShowBuySellButtons(false);
                       setShowTradeButtonX(false);
-                      // Fade out scrim independently
-                      Animated.timing(scrimOpacity, {
-                        toValue: 0,
-                        duration: 200,
-                        useNativeDriver: true,
-                      }).start(() => {
+                      // On Android, immediately remove scrim from render tree to prevent visual blocking
+                      if (Platform.OS === 'android') {
                         setShowTradeScrim(false);
-                      });
+                        scrimOpacity.setValue(0);
+                      } else {
+                        // Fade out scrim independently on iOS
+                        Animated.timing(scrimOpacity, {
+                          toValue: 0,
+                          duration: 200,
+                          useNativeDriver: true,
+                        }).start(() => {
+                          setShowTradeScrim(false);
+                        });
+                      }
                     }}
                     activeOpacity={0.8}
                   >
@@ -1245,6 +1255,7 @@ export default function AssetDetailScreen() {
                   </TouchableOpacity>
                 ) : (
                   <TouchableOpacity
+                    key="trade-button-main"
                     style={styles.tradeButton}
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -1303,15 +1314,26 @@ export default function AssetDetailScreen() {
             style={styles.buySellButton}
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-              Animated.timing(scrimOpacity, {
-                toValue: 0,
-                duration: 200,
-                useNativeDriver: true,
-              }).start(() => {
+              // On Android, immediately remove scrim from render tree to prevent visual blocking
+              if (Platform.OS === 'android') {
                 setShowTradeScrim(false);
+                setShowBuySellButtons(false);
+                setShowTradeButtonX(false);
+                scrimOpacity.setValue(0);
                 setBuySellMode('buy');
                 setShowBuySellModal(true);
-              });
+              } else {
+                // Fade out scrim independently on iOS
+                Animated.timing(scrimOpacity, {
+                  toValue: 0,
+                  duration: 200,
+                  useNativeDriver: true,
+                }).start(() => {
+                  setShowTradeScrim(false);
+                  setBuySellMode('buy');
+                  setShowBuySellModal(true);
+                });
+              }
             }}
             activeOpacity={0.8}
           >
@@ -1331,15 +1353,26 @@ export default function AssetDetailScreen() {
             style={[styles.buySellButton, { marginTop: 12 }]}
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-              Animated.timing(scrimOpacity, {
-                toValue: 0,
-                duration: 200,
-                useNativeDriver: true,
-              }).start(() => {
+              // On Android, immediately remove scrim from render tree to prevent visual blocking
+              if (Platform.OS === 'android') {
                 setShowTradeScrim(false);
+                setShowBuySellButtons(false);
+                setShowTradeButtonX(false);
+                scrimOpacity.setValue(0);
                 setBuySellMode('sell');
                 setShowBuySellModal(true);
-              });
+              } else {
+                // Fade out scrim independently on iOS
+                Animated.timing(scrimOpacity, {
+                  toValue: 0,
+                  duration: 200,
+                  useNativeDriver: true,
+                }).start(() => {
+                  setShowTradeScrim(false);
+                  setBuySellMode('sell');
+                  setShowBuySellModal(true);
+                });
+              }
             }}
             activeOpacity={0.8}
           >
@@ -1363,7 +1396,7 @@ export default function AssetDetailScreen() {
             styles.tradeScrimContainer, 
             { opacity: scrimOpacity }
           ]} 
-          pointerEvents="box-none"
+          pointerEvents={Platform.OS === 'android' ? (showTradeScrim && showBuySellButtons ? 'box-none' : 'none') : 'box-none'}
         >
           <TouchableOpacity
             style={styles.tradeScrimOverlay}
@@ -1372,14 +1405,20 @@ export default function AssetDetailScreen() {
               // Hide buttons and X button immediately
               setShowBuySellButtons(false);
               setShowTradeButtonX(false);
-              // Fade out scrim independently
-              Animated.timing(scrimOpacity, {
-                toValue: 0,
-                duration: 200,
-                useNativeDriver: true,
-              }).start(() => {
+              // On Android, immediately remove scrim from render tree to prevent visual blocking
+              if (Platform.OS === 'android') {
                 setShowTradeScrim(false);
-              });
+                scrimOpacity.setValue(0);
+              } else {
+                // Fade out scrim independently on iOS
+                Animated.timing(scrimOpacity, {
+                  toValue: 0,
+                  duration: 200,
+                  useNativeDriver: true,
+                }).start(() => {
+                  setShowTradeScrim(false);
+                });
+              }
             }}
           />
         </Animated.View>
@@ -1909,6 +1948,7 @@ const createStyles = (
     alignSelf: 'flex-end',
     position: 'relative',
     zIndex: 10001, // Ensure buttons are above everything
+    opacity: 1, // Explicitly ensure wrapper is visible on Android
     // Subtle underglow effect with orange glow
     shadowColor: isDark ? colors.orange : '#FF6B35', // Orange glow color
     shadowOffset: {
