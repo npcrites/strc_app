@@ -11,6 +11,7 @@ import AssetDetailScreen from './src/screens/AssetDetailScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import PayoutsDetailScreen from './src/screens/PayoutsDetailScreen';
 import HoldingsDetailScreen from './src/screens/HoldingsDetailScreen';
+import TransactionScreen from './src/screens/TransactionScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -180,6 +181,38 @@ function AppNavigator() {
                 header: () => null,
                 animation: 'slide_from_right',
                 gestureEnabled: true,
+              }}
+            />
+            <Stack.Screen 
+              name="Transaction" 
+              component={TransactionScreen}
+              options={{
+                headerShown: false,
+                headerBackVisible: false,
+                headerBackTitleVisible: false,
+                headerLeft: () => null,
+                header: () => null,
+                animation: 'slide_from_bottom',
+                animationDuration: 200,
+                gestureEnabled: true,
+                transitionSpec: {
+                  open: {
+                    animation: 'spring',
+                    config: {
+                      stiffness: 500,
+                      damping: 35,
+                      mass: 0.5,
+                    },
+                  },
+                  close: {
+                    animation: 'spring',
+                    config: {
+                      stiffness: 500,
+                      damping: 35,
+                      mass: 0.5,
+                    },
+                  },
+                },
               }}
             />
           </>

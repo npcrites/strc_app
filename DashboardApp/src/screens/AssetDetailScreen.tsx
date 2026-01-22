@@ -11,7 +11,6 @@ import {
   Share,
   Platform,
   Dimensions,
-  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -41,6 +40,7 @@ type RootStackParamList = {
   AssetDetail: { ticker: string };
   PayoutsDetail: { ticker: string };
   HoldingsDetail: { ticker: string };
+  Transaction: { ticker: string; mode: 'buy' | 'sell'; currentPrice?: number };
 };
 
 type AssetDetailRouteProp = RouteProp<RootStackParamList, 'AssetDetail'>;
@@ -105,8 +105,6 @@ export default function AssetDetailScreen() {
   const [holdings, setHoldings] = useState<Holdings | null>(null);
   const [holdingsLoading, setHoldingsLoading] = useState(false);
   const [scrollEnabled, setScrollEnabled] = useState(true);
-  const [showBuySellModal, setShowBuySellModal] = useState(false);
-  const [buySellMode, setBuySellMode] = useState<'buy' | 'sell'>('buy');
   const [showTradeScrim, setShowTradeScrim] = useState(false);
   const [showBuySellButtons, setShowBuySellButtons] = useState(false);
   const [showTradeButtonX, setShowTradeButtonX] = useState(false);
@@ -539,21 +537,21 @@ export default function AssetDetailScreen() {
         // Buy button animation (flies up)
         Animated.spring(buyButtonTranslateY, {
           toValue: -buttonSpacing,
-          tension: 50, // Lower tension for more bounce
-          friction: 7, // Lower friction for more bounce
+          tension: 150, // Higher tension for faster animation
+          friction: 10, // Higher friction for snappier movement
           useNativeDriver: true,
         }),
         // Sell button animation (flies up even higher, above Buy)
         Animated.spring(sellButtonTranslateY, {
           toValue: -buttonSpacing * 2, // Double the distance, so it's above Buy
-          tension: 50,
-          friction: 7,
+          tension: 150,
+          friction: 10,
           useNativeDriver: true,
         }),
         // Opacity fade in
         Animated.timing(buySellButtonsOpacity, {
           toValue: 1,
-          duration: 200,
+          duration: 150, // Faster fade in
           useNativeDriver: true,
         }),
       ]).start();
@@ -562,19 +560,19 @@ export default function AssetDetailScreen() {
       Animated.parallel([
         Animated.spring(buyButtonTranslateY, {
           toValue: 0,
-          tension: 100,
-          friction: 8,
+          tension: 150, // Higher tension for faster animation
+          friction: 10, // Higher friction for snappier movement
           useNativeDriver: true,
         }),
         Animated.spring(sellButtonTranslateY, {
           toValue: 0,
-          tension: 100,
-          friction: 8,
+          tension: 150,
+          friction: 10,
           useNativeDriver: true,
         }),
         Animated.timing(buySellButtonsOpacity, {
           toValue: 0,
-          duration: 150,
+          duration: 100, // Faster fade out
           useNativeDriver: true,
         }),
       ]).start();
@@ -1335,9 +1333,12 @@ export default function AssetDetailScreen() {
                           useNativeDriver: true,
                         }).start();
                       } else {
-                        // Show Buy modal for users without positions
-                        setBuySellMode('buy');
-                        setShowBuySellModal(true);
+                        // Navigate to Buy screen for users without positions
+                        navigation.navigate('Transaction', {
+                          ticker,
+                          mode: 'buy',
+                          currentPrice: currentPrice,
+                        });
                       }
                     }}
                     activeOpacity={0.8}
@@ -1386,26 +1387,17 @@ export default function AssetDetailScreen() {
               style={styles.buySellButton}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                // On Android, immediately remove scrim from render tree to prevent visual blocking
-                if (Platform.OS === 'android') {
-                  setShowTradeScrim(false);
-                  setShowBuySellButtons(false);
-                  setShowTradeButtonX(false);
-                  scrimOpacity.setValue(0);
-                  setBuySellMode('buy');
-                  setShowBuySellModal(true);
-                } else {
-                  // Fade out scrim independently on iOS
-                  Animated.timing(scrimOpacity, {
-                    toValue: 0,
-                    duration: 200,
-                    useNativeDriver: true,
-                  }).start(() => {
-                    setShowTradeScrim(false);
-                    setBuySellMode('buy');
-                    setShowBuySellModal(true);
-                  });
-                }
+                // Navigate immediately, close scrim in background
+                navigation.navigate('Transaction', {
+                  ticker,
+                  mode: 'buy',
+                  currentPrice: currentPrice,
+                });
+                // Close scrim without waiting
+                setShowTradeScrim(false);
+                setShowBuySellButtons(false);
+                setShowTradeButtonX(false);
+                scrimOpacity.setValue(0);
               }}
               activeOpacity={0.8}
             >
@@ -1434,26 +1426,17 @@ export default function AssetDetailScreen() {
               style={styles.buySellButton}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                // On Android, immediately remove scrim from render tree to prevent visual blocking
-                if (Platform.OS === 'android') {
-                  setShowTradeScrim(false);
-                  setShowBuySellButtons(false);
-                  setShowTradeButtonX(false);
-                  scrimOpacity.setValue(0);
-                  setBuySellMode('sell');
-                  setShowBuySellModal(true);
-                } else {
-                  // Fade out scrim independently on iOS
-                  Animated.timing(scrimOpacity, {
-                    toValue: 0,
-                    duration: 200,
-                    useNativeDriver: true,
-                  }).start(() => {
-                    setShowTradeScrim(false);
-                    setBuySellMode('sell');
-                    setShowBuySellModal(true);
-                  });
-                }
+                // Navigate immediately, close scrim in background
+                navigation.navigate('Transaction', {
+                  ticker,
+                  mode: 'sell',
+                  currentPrice: currentPrice,
+                });
+                // Close scrim without waiting
+                setShowTradeScrim(false);
+                setShowBuySellButtons(false);
+                setShowTradeButtonX(false);
+                scrimOpacity.setValue(0);
               }}
               activeOpacity={0.8}
             >
@@ -1506,40 +1489,6 @@ export default function AssetDetailScreen() {
         </Animated.View>
       )}
 
-      {/* Buy/Sell Modal */}
-      <Modal
-        visible={showBuySellModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowBuySellModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={() => setShowBuySellModal(false)}
-          />
-          <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-            <View style={styles.modalHandle} />
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {buySellMode === 'buy' ? 'Buy' : 'Sell'} {ticker}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setShowBuySellModal(false)}
-                style={styles.modalCloseButton}
-              >
-                <Ionicons name="close" size={24} color={getColors(isDark).textPrimary} />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.modalBody}>
-              <Text style={styles.modalPlaceholder}>
-                Buy/Sell functionality coming soon...
-              </Text>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -1623,13 +1572,14 @@ const createStyles = (
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
+    marginLeft: -4,
   },
   assetName: {
     fontSize: 14,
     fontWeight: 'bold',
     fontFamily: 'Inter-Bold',
     color: colors.textSecondary,
-    marginLeft: 6,
+    marginLeft: 4,
   },
   parentLogo: {
     marginRight: 0,
@@ -2137,64 +2087,6 @@ const createStyles = (
   tradeScrimOverlay: {
     flex: 1,
     backgroundColor: isDark ? 'rgba(0, 0, 0, 0.9)' : 'rgba(255, 255, 255, 0.95)',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  modalContent: {
-    backgroundColor: isDark ? ((colors as any).glassBackground || colors.backgroundWhite) : 'rgba(255, 255, 255, 0.95)',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 12,
-    paddingHorizontal: 20,
-    maxHeight: '80%',
-    // Glass-like border (only in dark mode)
-    borderWidth: isDark ? 1 : 0,
-    borderColor: isDark ? ((colors as any).glassBorder || colors.border) : 'transparent',
-    borderBottomWidth: 0,
-  },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: colors.textSecondary,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 20,
-    opacity: 0.3,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    fontFamily: 'ChakraPetch-Bold',
-    color: colors.textPrimary,
-  },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalBody: {
-    flex: 1,
-    paddingBottom: 20,
-  },
-  modalPlaceholder: {
-    fontSize: 16,
-    fontFamily: 'Inter-Medium',
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: 40,
   },
 });
 
