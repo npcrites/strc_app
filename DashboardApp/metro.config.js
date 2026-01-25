@@ -6,6 +6,9 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
+// Add support for GLB files
+config.resolver.assetExts.push('glb', 'gltf');
+
 // Reduce file watching to prevent EMFILE errors
 config.watchFolders = [__dirname];
 config.resolver.blockList = [

@@ -12,6 +12,7 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import PayoutsDetailScreen from './src/screens/PayoutsDetailScreen';
 import HoldingsDetailScreen from './src/screens/HoldingsDetailScreen';
 import TransactionScreen from './src/screens/TransactionScreen';
+import ReviewOrderScreen from './src/screens/ReviewOrderScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -215,6 +216,19 @@ function AppNavigator() {
                 },
               }}
             />
+            <Stack.Screen 
+              name="ReviewOrder" 
+              component={ReviewOrderScreen}
+              options={{
+                headerShown: false,
+                headerBackVisible: false,
+                headerBackTitleVisible: false,
+                headerLeft: () => null,
+                header: () => null,
+                animation: 'slide_from_right',
+                gestureEnabled: true,
+              }}
+            />
           </>
         ) : (
           <Stack.Screen 
@@ -266,4 +280,3 @@ export default function App() {
     </ThemeProvider>
   );
 }
-

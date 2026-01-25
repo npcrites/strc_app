@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useMemo, useRef, Fragment, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useLayoutEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
   StatusBar,
   Animated,
   Share,
@@ -59,6 +58,116 @@ interface AssetPriceHistory {
   granularity: string;
   series: PricePoint[];
 }
+
+const SkeletonLoadingState = ({ styles }: { styles: ReturnType<typeof createStyles> }) => {
+  const pulse = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0.4,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [pulse]);
+
+  return (
+    <View>
+      <View style={styles.mainCard}>
+        <View style={styles.header}>
+          <View style={styles.assetNameRow}>
+            <Animated.View style={[styles.skeletonBase, styles.skeletonLogo, { opacity: pulse }]} />
+            <Animated.View style={[styles.skeletonBase, styles.skeletonAssetName, { opacity: pulse }]} />
+          </View>
+          <Animated.View style={[styles.skeletonBase, styles.skeletonTicker, { opacity: pulse }]} />
+          <View style={styles.priceContainer}>
+            <Animated.View style={[styles.skeletonBase, styles.skeletonCurrency, { opacity: pulse }]} />
+            <Animated.View style={[styles.skeletonBase, styles.skeletonPrice, { opacity: pulse }]} />
+          </View>
+          <View style={styles.priceChangeRow}>
+            <Animated.View style={[styles.skeletonBase, styles.skeletonChange, { opacity: pulse }]} />
+            <View style={styles.rthEthContainer}>
+              <Animated.View style={[styles.skeletonBase, styles.skeletonToggle, { opacity: pulse }]} />
+              <Animated.View style={[styles.skeletonBase, styles.skeletonToggle, { opacity: pulse }]} />
+            </View>
+          </View>
+        </View>
+        <View style={styles.skeletonChartSpacer} />
+      </View>
+
+      <View style={styles.holdingsWrapper}>
+        <View style={styles.holdingsContainer}>
+          <View style={styles.holdingsHeader}>
+            <Animated.View style={[styles.skeletonBase, styles.skeletonSectionTitle, { opacity: pulse }]} />
+            <Animated.View style={[styles.skeletonBase, styles.skeletonChevron, { opacity: pulse }]} />
+          </View>
+          <View style={styles.holdingsRow}>
+            <View style={styles.holdingsLeft}>
+              <Animated.View style={[styles.skeletonBase, styles.skeletonLabel, { opacity: pulse }]} />
+              <Animated.View style={[styles.skeletonBase, styles.skeletonValue, { opacity: pulse }]} />
+            </View>
+            <View style={styles.holdingsRight}>
+              <Animated.View style={[styles.skeletonBase, styles.skeletonLabel, { opacity: pulse }]} />
+              <Animated.View style={[styles.skeletonBase, styles.skeletonValue, { opacity: pulse }]} />
+            </View>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.sectionDivider} />
+
+      <View style={styles.payoutsContainer}>
+        <View style={styles.payoutsHeader}>
+          <Animated.View style={[styles.skeletonBase, styles.skeletonSectionTitle, { opacity: pulse }]} />
+          <Animated.View style={[styles.skeletonBase, styles.skeletonChevron, { opacity: pulse }]} />
+        </View>
+        <View style={styles.payoutsRow}>
+          <View style={styles.payoutCard}>
+            <Animated.View style={[styles.skeletonBase, styles.skeletonPayoutIcon, { opacity: pulse }]} />
+            <Animated.View style={[styles.skeletonBase, styles.skeletonPayoutLabel, { opacity: pulse }]} />
+            <Animated.View style={[styles.skeletonBase, styles.skeletonPayoutValue, { opacity: pulse }]} />
+          </View>
+          <View style={styles.payoutDividerContainer}>
+            <View style={styles.payoutDivider} />
+          </View>
+          <View style={styles.payoutCard}>
+            <Animated.View style={[styles.skeletonBase, styles.skeletonPayoutIcon, { opacity: pulse }]} />
+            <Animated.View style={[styles.skeletonBase, styles.skeletonPayoutLabel, { opacity: pulse }]} />
+            <Animated.View style={[styles.skeletonBase, styles.skeletonPayoutValue, { opacity: pulse }]} />
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.sectionDivider} />
+
+      <View style={styles.detailsContainer}>
+        <View style={styles.detailsHeader}>
+          <Animated.View style={[styles.skeletonBase, styles.skeletonSectionTitle, { opacity: pulse }]} />
+          <Animated.View style={[styles.skeletonBase, styles.skeletonChevron, { opacity: pulse }]} />
+        </View>
+        <View style={styles.detailsRow}>
+          <Animated.View style={[styles.skeletonBase, styles.skeletonDetailsLabel, { opacity: pulse }]} />
+          <Animated.View style={[styles.skeletonBase, styles.skeletonDetailsValue, { opacity: pulse }]} />
+        </View>
+        <View style={styles.detailsRow}>
+          <Animated.View style={[styles.skeletonBase, styles.skeletonDetailsLabel, { opacity: pulse }]} />
+          <Animated.View style={[styles.skeletonBase, styles.skeletonDetailsValue, { opacity: pulse }]} />
+        </View>
+      </View>
+    </View>
+  );
+};
 
 export default function AssetDetailScreen() {
   const { token } = useAuth();
@@ -737,10 +846,13 @@ export default function AssetDetailScreen() {
           <BackButton onPress={() => navigation.goBack()} />
           <ExportButton onPress={handleShare} />
         </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={getColors(isDark).orange} />
-          <Text style={styles.loadingText}>Loading asset data...</Text>
-        </View>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <SkeletonLoadingState styles={styles} />
+        </ScrollView>
       </View>
     );
   }
@@ -1921,17 +2033,98 @@ const createStyles = (
     height: 1,
     backgroundColor: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.15)', // Lighter grey divider
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.background,
+  skeletonBase: {
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)',
   },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    fontFamily: 'Inter',
-    color: colors.textSecondary,
+  skeletonLogo: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    marginRight: 4,
+  },
+  skeletonAssetName: {
+    width: 120,
+    height: 12,
+    borderRadius: 6,
+  },
+  skeletonTicker: {
+    width: 80,
+    height: 20,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  skeletonCurrency: {
+    width: 18,
+    height: 32,
+    borderRadius: 6,
+    marginRight: 6,
+  },
+  skeletonPrice: {
+    width: 160,
+    height: 36,
+    borderRadius: 8,
+  },
+  skeletonChange: {
+    width: 140,
+    height: 14,
+    borderRadius: 6,
+  },
+  skeletonToggle: {
+    width: 46,
+    height: 22,
+    borderRadius: 8,
+  },
+  skeletonChartSpacer: {
+    height: 250,
+    marginBottom: 20,
+  },
+  skeletonSectionTitle: {
+    width: 140,
+    height: 18,
+    borderRadius: 8,
+  },
+  skeletonChevron: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+  skeletonLabel: {
+    width: 110,
+    height: 12,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  skeletonValue: {
+    width: 120,
+    height: 20,
+    borderRadius: 8,
+  },
+  skeletonPayoutIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginBottom: 8,
+  },
+  skeletonPayoutLabel: {
+    width: 70,
+    height: 12,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  skeletonPayoutValue: {
+    width: 90,
+    height: 16,
+    borderRadius: 8,
+  },
+  skeletonDetailsLabel: {
+    width: 140,
+    height: 12,
+    borderRadius: 6,
+  },
+  skeletonDetailsValue: {
+    width: 80,
+    height: 12,
+    borderRadius: 6,
   },
   errorContainer: {
     flex: 1,
@@ -2089,4 +2282,3 @@ const createStyles = (
     backgroundColor: isDark ? 'rgba(0, 0, 0, 0.9)' : 'rgba(255, 255, 255, 0.95)',
   },
 });
-

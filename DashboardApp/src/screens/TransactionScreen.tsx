@@ -25,12 +25,23 @@ import { Ionicons } from '@expo/vector-icons';
 import { Holdings, Position } from '../types';
 import MSTRSymbol from '../components/MSTRSymbol';
 import ASSTSymbol from '../components/ASSTSymbol';
+import BackButton from '../components/BackButton';
+import LottieAnimation from '../components/LottieAnimation';
+import AIIcon from '../components/AIIcon';
 import { hasMSTRParent, hasASTTParent } from '../utils/assetUtils';
 import Svg, { Path, Circle, Rect, G, Defs, LinearGradient, Stop, ClipPath } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 
 type RootStackParamList = {
   Transaction: { ticker: string; mode: 'buy' | 'sell'; currentPrice?: number };
+  ReviewOrder: {
+    ticker: string;
+    mode: 'buy' | 'sell';
+    amount: number;
+    sharesAmount: number;
+    currentPrice: number;
+    orderType: 'smart' | 'one-time' | 'recurring' | 'custom';
+  };
 };
 
 type TransactionRouteProp = RouteProp<RootStackParamList, 'Transaction'>;
@@ -262,127 +273,6 @@ function CartIcon({ size = 24, isDark = false }: CartIconProps) {
   );
 }
 
-// Calendar Icon Component (for recurring order)
-interface CalendarIconProps {
-  size?: number;
-  isDark?: boolean;
-}
-
-function CalendarIcon({ size = 24, isDark = false }: CalendarIconProps) {
-  const aspectRatio = 147 / 147;
-  const width = size * aspectRatio;
-  
-  if (isDark) {
-    // Dark mode calendar icon
-    return (
-      <Svg width={width} height={size} viewBox="0 0 147 147">
-        <Defs>
-          <LinearGradient id="calDarkGrad0" x1="16.5854" y1="62.457" x2="45.4882" y2="90.4133">
-            <Stop offset="0" stopColor="#FFBA93" />
-            <Stop offset="1" stopColor="#FF7A2E" />
-          </LinearGradient>
-          <LinearGradient id="calDarkGrad1" x1="38.6211" y1="25.6463" x2="59.4165" y2="49.4665">
-            <Stop offset="0" stopColor="white" />
-            <Stop offset="0.765625" stopColor="white" stopOpacity="0" />
-          </LinearGradient>
-          <LinearGradient id="calDarkGrad2" x1="85.1897" y1="25.6463" x2="105.985" y2="49.4665">
-            <Stop offset="0" stopColor="white" />
-            <Stop offset="0.765625" stopColor="white" stopOpacity="0" />
-          </LinearGradient>
-          <LinearGradient id="calDarkGrad3" x1="21.6569" y1="61.7606" x2="61.9266" y2="147.864">
-            <Stop offset="0" stopColor="white" />
-            <Stop offset="0.765625" stopColor="white" stopOpacity="0" />
-          </LinearGradient>
-          <LinearGradient id="calDarkGrad4" x1="104.48" y1="72.2553" x2="95.9135" y2="110.193">
-            <Stop offset="0" stopColor="white" stopOpacity="0" />
-            <Stop offset="0.979167" stopColor="white" />
-          </LinearGradient>
-          <LinearGradient id="calDarkGrad5" x1="96.1664" y1="76.9666" x2="96.1664" y2="116.882">
-            <Stop offset="0" stopColor="white" stopOpacity="0" />
-            <Stop offset="1" stopColor="white" />
-          </LinearGradient>
-          <LinearGradient id="calDarkGrad6" x1="101.655" y1="96.4965" x2="95.5362" y2="128.315">
-            <Stop offset="0" stopColor="white" stopOpacity="0" />
-            <Stop offset="0.979167" stopColor="white" />
-          </LinearGradient>
-          <LinearGradient id="calDarkGrad7" x1="96.1664" y1="96.9245" x2="96.1664" y2="136.84">
-            <Stop offset="0" stopColor="white" stopOpacity="0" />
-            <Stop offset="1" stopColor="white" />
-          </LinearGradient>
-        </Defs>
-        <Path
-          d="M26.3138 57.8641C26.3138 52.0392 26.3138 49.1267 27.21 46.81C28.5618 43.3158 31.3242 40.5535 34.8184 39.2017C37.135 38.3054 40.0475 38.3054 45.8725 38.3054H99.8919C105.717 38.3054 108.629 38.3054 110.946 39.2017C114.44 40.5535 117.203 43.3158 118.554 46.81C119.451 49.1267 119.451 52.0392 119.451 57.8642V86.537H26.3138V57.8641Z"
-          fill="url(#calDarkGrad0)"
-        />
-        <Rect x="39.925" y="24.0515" width="19.346" height="25.9986" rx="9.673" fill="#FFCFB4" stroke="url(#calDarkGrad1)" strokeWidth="0.611895" />
-        <Rect x="86.4935" y="24.0515" width="19.346" height="25.9986" rx="9.673" fill="#FFCFB4" stroke="url(#calDarkGrad2)" strokeWidth="0.611895" />
-        <Path
-          d="M47.6019 57.3144H98.1624C101.893 57.3144 104.673 57.315 106.876 57.495C109.076 57.6748 110.674 58.0319 112.047 58.7314C114.493 59.9776 116.482 61.9662 117.728 64.412C118.427 65.7847 118.784 67.3833 118.964 69.5829C119.144 71.7862 119.145 74.5661 119.145 78.2968V91.6025C119.145 97.196 119.144 101.373 118.873 104.685C118.603 107.994 118.065 110.415 117.003 112.499C115.119 116.197 112.112 119.203 108.414 121.087C106.33 122.149 103.911 122.688 100.602 122.958C97.2892 123.229 93.1117 123.229 87.5179 123.229H58.2464C52.6528 123.229 48.476 123.229 45.1634 122.958C41.8543 122.688 39.4342 122.149 37.3499 121.087C33.6523 119.203 30.6461 116.197 28.762 112.499C27.7 110.415 27.1613 107.995 26.8909 104.685C26.6203 101.373 26.6194 97.196 26.6194 91.6025V78.2968C26.6194 74.5661 26.6201 71.7862 26.8001 69.5829C26.9798 67.3833 27.337 65.7847 28.0364 64.412C29.2827 61.9662 31.2713 59.9776 33.7171 58.7314C35.0898 58.0319 36.6884 57.6748 38.888 57.495C41.0913 57.315 43.8712 57.3144 47.6019 57.3144Z"
-          fill="#FFCFB4"
-          stroke="url(#calDarkGrad3)"
-          strokeWidth="0.611895"
-        />
-        <Rect x="92.5953" y="77.2113" width="6.16312" height="39.4263" rx="3.08156" transform="rotate(90 92.5953 77.2113)" fill="url(#calDarkGrad4)" fillOpacity="0.9" stroke="url(#calDarkGrad5)" strokeWidth="0.489516" />
-        <Rect x="92.5953" y="97.1693" width="6.16312" height="39.4263" rx="3.08156" transform="rotate(90 92.5953 97.1693)" fill="url(#calDarkGrad6)" fillOpacity="0.9" stroke="url(#calDarkGrad7)" strokeWidth="0.489516" />
-      </Svg>
-    );
-  }
-  
-  // Light mode calendar icon
-  return (
-    <Svg width={width} height={size} viewBox="0 0 147 147">
-      <Defs>
-        <LinearGradient id="calLightGrad0" x1="17.5491" y1="60.7396" x2="46.4518" y2="88.696">
-          <Stop offset="0" stopColor="#FFD6A4" />
-          <Stop offset="1" stopColor="#F7931A" />
-        </LinearGradient>
-        <LinearGradient id="calLightGrad1" x1="39.5848" y1="23.929" x2="60.3802" y2="47.7492">
-          <Stop offset="0" stopColor="white" />
-          <Stop offset="0.765625" stopColor="white" stopOpacity="0" />
-        </LinearGradient>
-        <LinearGradient id="calLightGrad2" x1="86.1534" y1="23.929" x2="106.949" y2="47.7492">
-          <Stop offset="0" stopColor="white" />
-          <Stop offset="0.765625" stopColor="white" stopOpacity="0" />
-        </LinearGradient>
-        <LinearGradient id="calLightGrad3" x1="22.6206" y1="60.0433" x2="62.8903" y2="146.147">
-          <Stop offset="0" stopColor="white" />
-          <Stop offset="0.765625" stopColor="white" stopOpacity="0" />
-        </LinearGradient>
-        <LinearGradient id="calLightGrad4" x1="105.444" y1="70.538" x2="96.8771" y2="108.475">
-          <Stop offset="0" stopColor="white" stopOpacity="0" />
-          <Stop offset="0.979167" stopColor="white" />
-        </LinearGradient>
-        <LinearGradient id="calLightGrad5" x1="97.1301" y1="75.2492" x2="97.1301" y2="115.165">
-          <Stop offset="0" stopColor="white" stopOpacity="0" />
-          <Stop offset="1" stopColor="white" />
-        </LinearGradient>
-        <LinearGradient id="calLightGrad6" x1="102.619" y1="94.7792" x2="96.4998" y2="126.598">
-          <Stop offset="0" stopColor="white" stopOpacity="0" />
-          <Stop offset="0.979167" stopColor="white" />
-        </LinearGradient>
-        <LinearGradient id="calLightGrad7" x1="97.1301" y1="95.2072" x2="97.1301" y2="135.123">
-          <Stop offset="0" stopColor="white" stopOpacity="0" />
-          <Stop offset="1" stopColor="white" />
-        </LinearGradient>
-      </Defs>
-      <Path
-        d="M27.2775 56.1468C27.2775 50.3218 27.2775 47.4094 28.1737 45.0927C29.5255 41.5985 32.2879 38.8361 35.782 37.4843C38.0987 36.5881 41.0112 36.5881 46.8362 36.5881H100.856C106.681 36.5881 109.593 36.5881 111.91 37.4843C115.404 38.8361 118.166 41.5985 119.518 45.0927C120.414 47.4094 120.414 50.3218 120.414 56.1468V84.8197H27.2775V56.1468Z"
-        fill="url(#calLightGrad0)"
-      />
-      <Rect x="40.8887" y="22.3342" width="19.346" height="25.9986" rx="9.673" fill="#F7CDA8" stroke="url(#calLightGrad1)" strokeWidth="0.611895" />
-      <Rect x="87.4572" y="22.3342" width="19.346" height="25.9986" rx="9.673" fill="#F7D0AC" stroke="url(#calLightGrad2)" strokeWidth="0.611895" />
-      <Path
-        d="M48.5656 55.597H99.1261C102.857 55.597 105.637 55.5977 107.84 55.7777C110.04 55.9574 111.638 56.3146 113.011 57.014C115.457 58.2603 117.445 60.2489 118.692 62.6947C119.391 64.0674 119.748 65.666 119.928 67.8656C120.108 70.0689 120.109 72.8488 120.109 76.5795V89.8851C120.109 95.4787 120.108 99.6555 119.837 102.968C119.567 106.277 119.029 108.697 117.967 110.782C116.083 114.479 113.076 117.485 109.378 119.37C107.294 120.431 104.874 120.97 101.566 121.241C98.2529 121.511 94.0754 121.512 88.4816 121.512H59.2101C53.6165 121.512 49.4397 121.511 46.1271 121.241C42.818 120.97 40.3979 120.432 38.3136 119.37C34.6159 117.485 31.6098 114.479 29.7257 110.782C28.6637 108.697 28.125 106.277 27.8546 102.968C27.584 99.6555 27.5831 95.4787 27.5831 89.8851V76.5795C27.5831 72.8488 27.5838 70.0689 27.7638 67.8656C27.9435 65.666 28.3007 64.0674 29.0001 62.6947C30.2464 60.2489 32.235 58.2603 34.6808 57.014C36.0535 56.3146 37.6521 55.9574 39.8517 55.7777C42.055 55.5977 44.8349 55.597 48.5656 55.597Z"
-        fill="#FFD6A5"
-        stroke="url(#calLightGrad3)"
-        strokeWidth="0.611895"
-      />
-      <Rect x="93.559" y="75.494" width="6.16312" height="39.4263" rx="3.08156" transform="rotate(90 93.559 75.494)" fill="url(#calLightGrad4)" fillOpacity="0.9" stroke="url(#calLightGrad5)" strokeWidth="0.489516" />
-      <Rect x="93.559" y="95.4519" width="6.16312" height="39.4263" rx="3.08156" transform="rotate(90 93.559 95.4519)" fill="url(#calLightGrad6)" fillOpacity="0.9" stroke="url(#calLightGrad7)" strokeWidth="0.489516" />
-    </Svg>
-  );
-}
-
 // Reusable snappy spring animation for slide-up modals
 export const createSnappySpringAnimation = (
   animatedValue: Animated.Value,
@@ -397,6 +287,53 @@ export const createSnappySpringAnimation = (
   });
 };
 
+const SkeletonLoadingState = ({ styles }: { styles: ReturnType<typeof createStyles> }) => {
+  const pulse = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0.4,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [pulse]);
+
+  return (
+    <ScrollView
+      style={styles.assetListContainer}
+      contentContainerStyle={styles.assetListContent}
+      showsVerticalScrollIndicator={false}
+    >
+      {Array.from({ length: 6 }).map((_, index) => (
+        <View key={`asset-skeleton-${index}`} style={styles.assetOption}>
+          <View style={styles.assetOptionLeft}>
+            <Animated.View style={[styles.skeletonBase, styles.skeletonIcon, { opacity: pulse }]} />
+            <View style={styles.assetOptionTextContainer}>
+              <Animated.View style={[styles.skeletonBase, styles.skeletonLinePrimary, { opacity: pulse }]} />
+              <Animated.View style={[styles.skeletonBase, styles.skeletonLineSecondary, { opacity: pulse }]} />
+            </View>
+          </View>
+          <View style={styles.assetOptionRight}>
+            <Animated.View style={[styles.skeletonBase, styles.skeletonLinePrice, { opacity: pulse }]} />
+          </View>
+        </View>
+      ))}
+    </ScrollView>
+  );
+};
+
 export default function TransactionScreen() {
   const { token } = useAuth();
   const { isDark } = useTheme();
@@ -404,14 +341,15 @@ export default function TransactionScreen() {
   const route = useRoute<TransactionRouteProp>();
   const insets = useSafeAreaInsets();
   const screenHeight = Dimensions.get('window').height;
-  const modalHeight = useMemo(() => screenHeight * 0.85, [screenHeight]); // 85% of screen height
+  const modalHeight = useMemo(() => screenHeight, [screenHeight]); // Full screen height
+  const assetModalHeight = useMemo(() => screenHeight * 0.78, [screenHeight]);
   
   const { ticker, mode, currentPrice } = route.params;
   
   const [amount, setAmount] = useState<string>('0');
   const [hasDecimal, setHasDecimal] = useState<boolean>(false);
   const [inputMode, setInputMode] = useState<'usd' | 'shares'>('usd');
-  const [orderType, setOrderType] = useState<'one-time' | 'recurring'>('one-time');
+  const [orderType, setOrderType] = useState<'smart' | 'one-time' | 'recurring' | 'custom'>('smart');
   const [showOrderTypeModal, setShowOrderTypeModal] = useState(false);
   const [isModalAnimating, setIsModalAnimating] = useState(false);
   const [shouldRenderModal, setShouldRenderModal] = useState(false);
@@ -430,15 +368,24 @@ export default function TransactionScreen() {
   const orderTypeModalOpacity = useRef(new Animated.Value(0)).current;
   const assetSelectionModalTranslateY = useRef(new Animated.Value(screenHeight)).current;
   const assetSelectionModalOpacity = useRef(new Animated.Value(0)).current;
+  // cartIconRotation removed - LottieAnimation handles its own animation
+  // calendarIconRotation removed - LottieAnimation handles its own animation
+  // limitIconRotation removed - LottieAnimation handles its own animation
   
   // Initialize modal position when modalHeight is calculated
   useEffect(() => {
-    orderTypeModalTranslateY.setValue(modalHeight);
-    assetSelectionModalTranslateY.setValue(modalHeight);
-  }, [modalHeight, orderTypeModalTranslateY, assetSelectionModalTranslateY]);
+    orderTypeModalTranslateY.setValue(modalHeight); // Start from bottom
+    assetSelectionModalTranslateY.setValue(assetModalHeight);
+  }, [modalHeight, assetModalHeight, orderTypeModalTranslateY, assetSelectionModalTranslateY]);
   
   const colors = getColors(isDark);
   const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
+
+  useEffect(() => {
+    if (mode === 'buy') {
+      setOrderType('smart');
+    }
+  }, [mode]);
   
   // Get current price - use from params or position
   const price = currentPrice || position?.current_price_per_share || 0;
@@ -592,13 +539,14 @@ export default function TransactionScreen() {
     }
   }, [amount, reviewOrderTranslateX]);
   
+
   // Order type modal animations
   useEffect(() => {
     if (showOrderTypeModal) {
       // Open modal with snappy spring animation
       setShouldRenderModal(true);
       setIsModalAnimating(true);
-      orderTypeModalTranslateY.setValue(modalHeight); // Ensure starting from bottom
+      orderTypeModalTranslateY.setValue(modalHeight); // Ensure starting from bottom (off-screen below)
       const springAnim = createSnappySpringAnimation(orderTypeModalTranslateY, 0);
       const opacityAnim = Animated.timing(orderTypeModalOpacity, {
         toValue: 1,
@@ -608,6 +556,7 @@ export default function TransactionScreen() {
       Animated.parallel([springAnim, opacityAnim]).start(() => {
         setIsModalAnimating(false);
       });
+      // Start spinning animations for icons (LottieAnimation handles its own animation)
     } else if (shouldRenderModal) {
       // Close modal with snappy spring animation
       setIsModalAnimating(true);
@@ -621,6 +570,7 @@ export default function TransactionScreen() {
         setIsModalAnimating(false);
         setShouldRenderModal(false); // Hide modal after animation completes
       });
+      // Stop spinning animations (reset values) - LottieAnimation handles its own animation
     }
   }, [showOrderTypeModal, modalHeight, orderTypeModalTranslateY, orderTypeModalOpacity, shouldRenderModal]);
 
@@ -630,7 +580,7 @@ export default function TransactionScreen() {
       // Open modal with snappy spring animation
       setShouldRenderAssetModal(true);
       setIsAssetModalAnimating(true);
-      assetSelectionModalTranslateY.setValue(modalHeight); // Ensure starting from bottom
+      assetSelectionModalTranslateY.setValue(assetModalHeight); // Ensure starting from bottom
       const springAnim = createSnappySpringAnimation(assetSelectionModalTranslateY, 0);
       const opacityAnim = Animated.timing(assetSelectionModalOpacity, {
         toValue: 1,
@@ -643,7 +593,7 @@ export default function TransactionScreen() {
     } else if (shouldRenderAssetModal) {
       // Close modal with snappy spring animation
       setIsAssetModalAnimating(true);
-      const springAnim = createSnappySpringAnimation(assetSelectionModalTranslateY, modalHeight);
+      const springAnim = createSnappySpringAnimation(assetSelectionModalTranslateY, assetModalHeight);
       const opacityAnim = Animated.timing(assetSelectionModalOpacity, {
         toValue: 0,
         duration: 200,
@@ -654,7 +604,7 @@ export default function TransactionScreen() {
         setShouldRenderAssetModal(false); // Hide modal after animation completes
       });
     }
-  }, [showAssetSelectionModal, modalHeight, assetSelectionModalTranslateY, assetSelectionModalOpacity, shouldRenderAssetModal]);
+  }, [showAssetSelectionModal, assetModalHeight, assetSelectionModalTranslateY, assetSelectionModalOpacity, shouldRenderAssetModal]);
 
   // Fetch available assets when modal opens
   useEffect(() => {
@@ -811,7 +761,7 @@ export default function TransactionScreen() {
     }
   }, [showAssetSelectionModal, token, mode]);
   
-  const handleOrderTypeSelect = (type: 'one-time' | 'recurring') => {
+  const handleOrderTypeSelect = (type: 'smart' | 'one-time' | 'recurring' | 'custom') => {
     setOrderType(type);
     setShowOrderTypeModal(false);
   };
@@ -993,9 +943,18 @@ export default function TransactionScreen() {
             activeOpacity={0.7}
             onPress={() => setShowOrderTypeModal(true)}
           >
-            <Text style={styles.orderTypeText}>
-              {orderType === 'one-time' ? 'One-time order' : 'Recurring order'}
-            </Text>
+            <View style={styles.orderTypeTextRow}>
+              {orderType === 'smart' && <AIIcon size={14} />}
+              <Text style={styles.orderTypeText}>
+                {orderType === 'smart'
+                  ? 'Smart Schedule'
+                  : orderType === 'one-time'
+                    ? 'One-time order'
+                    : orderType === 'recurring'
+                      ? 'Recurring order'
+                      : 'Custom'}
+              </Text>
+            </View>
             <Ionicons name="chevron-down" size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -1274,8 +1233,14 @@ export default function TransactionScreen() {
                     <TouchableOpacity 
                       style={styles.reviewOrderButton} 
                       onPress={() => {
-                        // TODO: Handle review order
-                        console.log('Review order pressed');
+                        navigation.navigate('ReviewOrder', {
+                          ticker,
+                          mode,
+                          amount: usdAmount,
+                          sharesAmount: sharesAmount,
+                          currentPrice: price,
+                          orderType,
+                        });
                       }}
                       activeOpacity={0.8}
                     >
@@ -1379,13 +1344,56 @@ export default function TransactionScreen() {
               {
                 height: modalHeight,
                 transform: [{ translateY: orderTypeModalTranslateY }],
+                paddingTop: Math.max(insets.top, 20),
                 paddingBottom: Math.max(insets.bottom, 20),
               },
             ]}
           >
-            <View style={styles.modalHandle} />
             <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <BackButton onPress={() => setShowOrderTypeModal(false)} />
+              </View>
               <Text style={styles.modalTitle}>Order Type</Text>
+              <TouchableOpacity
+                style={[
+                  styles.orderTypeOption,
+                  orderType === 'smart' && styles.orderTypeOptionSelected,
+                ]}
+                onPress={() => handleOrderTypeSelect('smart')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.orderTypeIconWrapper}>
+                  <LottieAnimation 
+                    source={require('../../assets/smart-icon.json')} 
+                    size={60}
+                    loop={true}
+                    autoPlay={true}
+                    speed={1}
+                  />
+                </View>
+                <View style={styles.orderTypeTextContainer}>
+                  <View style={styles.orderTypeOptionTitleRow}>
+                    <AIIcon size={14} />
+                    <Text
+                      style={[
+                        styles.orderTypeOptionText,
+                        orderType === 'smart' && styles.orderTypeOptionTextSelected,
+                      ]}
+                    >
+                      Smart Schedule
+                    </Text>
+                  </View>
+                  <Text style={styles.orderTypeSubtext}>
+                    Optimized scheduling that adjusts to market conditions
+                  </Text>
+                </View>
+                <Ionicons 
+                  name="chevron-forward" 
+                  size={20} 
+                  color={colors.textSecondary} 
+                />
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={[
                   styles.orderTypeOption,
@@ -1394,7 +1402,15 @@ export default function TransactionScreen() {
                 onPress={() => handleOrderTypeSelect('one-time')}
                 activeOpacity={0.7}
               >
-                <CartIcon size={56} isDark={isDark} />
+                <View style={styles.orderTypeIconWrapper}>
+                  <LottieAnimation 
+                    source={require('../../assets/cart-icon.json')} 
+                    size={60}
+                    loop={true}
+                    autoPlay={true}
+                    speed={1}
+                  />
+                </View>
                 <View style={styles.orderTypeTextContainer}>
                   <Text
                     style={[
@@ -1423,7 +1439,15 @@ export default function TransactionScreen() {
                 onPress={() => handleOrderTypeSelect('recurring')}
                 activeOpacity={0.7}
               >
-                <CalendarIcon size={56} isDark={isDark} />
+                <View style={styles.orderTypeIconWrapper}>
+                  <LottieAnimation 
+                    source={require('../../assets/calendar-icon.json')} 
+                    size={60}
+                    loop={true}
+                    autoPlay={true}
+                    speed={1}
+                  />
+                </View>
                 <View style={styles.orderTypeTextContainer}>
                   <Text
                     style={[
@@ -1435,6 +1459,43 @@ export default function TransactionScreen() {
                   </Text>
                   <Text style={styles.orderTypeSubtext}>
                     Schedule orders to execute at customizable points in time on a recurring basis
+                  </Text>
+                </View>
+                <Ionicons 
+                  name="chevron-forward" 
+                  size={20} 
+                  color={colors.textSecondary} 
+                />
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={[
+                  styles.orderTypeOption,
+                  orderType === 'custom' && styles.orderTypeOptionSelected,
+                ]}
+                onPress={() => handleOrderTypeSelect('custom')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.orderTypeIconWrapper}>
+                  <LottieAnimation 
+                    source={require('../../assets/custom-icon.json')} 
+                    size={60}
+                    loop={true}
+                    autoPlay={true}
+                    speed={1}
+                  />
+                </View>
+                <View style={styles.orderTypeTextContainer}>
+                  <Text
+                    style={[
+                      styles.orderTypeOptionText,
+                      orderType === 'custom' && styles.orderTypeOptionTextSelected,
+                    ]}
+                  >
+                    Custom
+                  </Text>
+                  <Text style={styles.orderTypeSubtext}>
+                    Set your own execution rules and conditions
                   </Text>
                 </View>
                 <Ionicons 
@@ -1470,7 +1531,7 @@ export default function TransactionScreen() {
             style={[
               styles.orderTypeModal,
               {
-                height: modalHeight,
+                height: assetModalHeight,
                 transform: [{ translateY: assetSelectionModalTranslateY }],
                 paddingBottom: Math.max(insets.bottom, 20),
               },
@@ -1480,9 +1541,7 @@ export default function TransactionScreen() {
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>Select Asset</Text>
               {assetsLoading ? (
-                <View style={styles.loadingContainer}>
-                  <Text style={styles.loadingText}>Loading assets...</Text>
-                </View>
+                <SkeletonLoadingState styles={styles} />
               ) : availableAssets.length > 0 ? (
                 <ScrollView 
                   style={styles.assetListContainer}
@@ -1599,6 +1658,11 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     fontSize: 15,
     fontFamily: 'Inter-SemiBold',
     color: colors.textPrimary,
+  },
+  orderTypeTextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   amountSection: {
     paddingHorizontal: 20,
@@ -1779,7 +1843,7 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
   reviewOrderButton: {
     width: '100%',
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: 999,
     backgroundColor: colors.orange,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1863,7 +1927,6 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
     elevation: 5,
-    maxHeight: '85%', // Ensure it never exceeds 85% regardless of screen size
   },
   modalHandle: {
     width: 40,
@@ -1880,6 +1943,12 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingHorizontal: 0,
   },
   modalTitle: {
     fontSize: 24,
@@ -1905,9 +1974,21 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
   orderTypeOptionSelected: {
     // No special styling for selected state
   },
+  orderTypeIconWrapper: {
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'visible',
+  },
   orderTypeTextContainer: {
     flex: 1,
     marginLeft: 16,
+  },
+  orderTypeOptionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   orderTypeOptionText: {
     fontSize: 16,
@@ -1975,6 +2056,31 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     fontFamily: 'Inter-SemiBold',
     color: colors.textPrimary,
   },
+  skeletonBase: {
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)',
+  },
+  skeletonIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    marginRight: 12,
+  },
+  skeletonLinePrimary: {
+    height: 16,
+    width: 140,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  skeletonLineSecondary: {
+    height: 12,
+    width: 90,
+    borderRadius: 6,
+  },
+  skeletonLinePrice: {
+    height: 16,
+    width: 72,
+    borderRadius: 8,
+  },
   loadingContainer: {
     paddingVertical: 40,
     alignItems: 'center',
@@ -1986,4 +2092,3 @@ const createStyles = (colors: ReturnType<typeof getColors>, isDark: boolean) => 
     color: colors.textSecondary,
   },
 });
-
