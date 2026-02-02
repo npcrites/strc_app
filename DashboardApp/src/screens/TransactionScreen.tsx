@@ -362,6 +362,8 @@ export default function TransactionScreen() {
   const [position, setPosition] = useState<Position | null>(null);
   const [loading, setLoading] = useState(true);
   const [cursorVisible, setCursorVisible] = useState(true);
+  const [hasLinkedAccount, setHasLinkedAccount] = useState<boolean | null>(null);
+  const [checkingBankAccount, setCheckingBankAccount] = useState(false);
   const reviewOrderTranslateX = useRef(new Animated.Value(-1000)).current;
   const hasShownReviewButton = useRef(false);
   const orderTypeModalTranslateY = useRef(new Animated.Value(screenHeight)).current;
@@ -502,6 +504,28 @@ export default function TransactionScreen() {
   // Main display value based on input mode
   const formattedAmount = inputMode === 'usd' ? formattedUsdAmount : formattedSharesAmount;
   
+  // Check if user has linked bank account (for buy orders)
+  useEffect(() => {
+    if (mode === 'buy' && token) {
+      const checkBankAccount = async () => {
+        try {
+          setCheckingBankAccount(true);
+          const response = await api.get<{ has_linked_account: boolean }>(
+            '/plaid/has-linked-account',
+            token
+          );
+          setHasLinkedAccount(response.has_linked_account);
+        } catch (error) {
+          console.error('Error checking bank account:', error);
+          setHasLinkedAccount(false);
+        } finally {
+          setCheckingBankAccount(false);
+        }
+      };
+      checkBankAccount();
+    }
+  }, [mode, token]);
+
   // Cursor blinking animation
   useEffect(() => {
     const interval = setInterval(() => {
@@ -1232,7 +1256,20 @@ export default function TransactionScreen() {
                   >
                     <TouchableOpacity 
                       style={styles.reviewOrderButton} 
-                      onPress={() => {
+                      onPress={async () => {
+                        // Check bank account for buy orders
+                        if (mode === 'buy') {
+                          if (hasLinkedAccount === false) {
+                            // Navigate directly to bank linking screen
+                            navigation.navigate('BankLinking' as any);
+                            return;
+                          } else if (hasLinkedAccount === null && checkingBankAccount) {
+                            // Still checking, wait a moment
+                            return;
+                          }
+                        }
+                        
+                        // Proceed to review order
                         navigation.navigate('ReviewOrder', {
                           ticker,
                           mode,

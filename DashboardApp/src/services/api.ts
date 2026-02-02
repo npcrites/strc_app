@@ -108,6 +108,7 @@ class ApiService {
               console.error('   2. Server is running: cd backend && ./start_server.sh');
               console.error('   3. Firewall allows connections on port 8000');
               console.error('   4. IP address is correct (current: 192.168.1.152)');
+              console.error('   5. Update app.json apiUrlDevice if IP changed');
             } else {
               console.error('❌ Backend health check failed:', err.message);
               console.error('   Tried URL:', healthUrl);

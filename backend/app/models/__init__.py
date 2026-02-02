@@ -10,6 +10,7 @@ from app.models.portfolio_snapshot import PortfolioSnapshot
 from app.models.position_snapshot import PositionSnapshot
 from app.models.asset_metrics import AssetMetrics
 from app.models.asset_metadata import AssetMetadata
+from app.models.bank_account import BankAccount
 
 __all__ = [
     "User",
@@ -22,4 +23,5 @@ __all__ = [
     "PositionSnapshot",
     "AssetMetrics",
     "AssetMetadata",
+    "BankAccount",
 ]

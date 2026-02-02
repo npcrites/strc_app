@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Alpha Vantage API (for dividend data)
     ALPHA_VANTAGE_API_KEY: str = ""
     
+    # Plaid Configuration
+    PLAID_CLIENT_ID: str = "6952cecf168aa50020a8c16a"
+    PLAID_SECRET: str = "108b8a7a5be3ab3913904e606b83c9"
+    PLAID_ENV: str = "sandbox"  # sandbox, development, or production
+    PLAID_PRODUCTS: List[str] = ["auth", "identity"]  # Products to enable
+    
     # Dividend sync settings
     DIVIDEND_SYNC_ENABLED: bool = True
     DIVIDEND_SYNC_INTERVAL_HOURS: int = 24  # Daily
@@ -52,7 +58,7 @@ class Settings(BaseSettings):
     # Includes Expo default ports: 19000 (Metro), 19006 (Expo Go), 8081 (Metro alternative)
     # Also includes common Expo Go URLs for physical devices
     # For development, use "*" to allow all origins (set in .env: CORS_ORIGINS=*)
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:19006,http://localhost:19000,http://localhost:8081,exp://localhost:8081,exp://192.168.1.107:8081"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:19006,http://localhost:19000,http://localhost:8081,exp://localhost:8081,exp://192.168.1.152:8081,http://192.168.1.152:19000,http://192.168.1.152:19006"
     
     @property
     def cors_origins_list(self) -> List[str]:

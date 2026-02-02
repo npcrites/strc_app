@@ -48,6 +48,11 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan"
     )
+    bank_accounts = relationship(
+        "BankAccount",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
     
     # Indexes
     __table_args__ = (

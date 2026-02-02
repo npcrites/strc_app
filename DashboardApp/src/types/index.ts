@@ -121,3 +121,21 @@ export interface Holdings {
   daily_volume?: number | null;  // Daily volume from AssetMetrics cache
 }
 
+export interface BankAccount {
+  id: number;
+  account_name?: string;
+  account_type?: string;
+  account_subtype?: string;
+  institution_name?: string;
+  mask?: string;
+  official_name?: string;
+  balance_available?: string;
+  balance_current?: string;
+  balance_limit?: string;
+  balance_iso_currency_code?: string;
+  is_primary: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+

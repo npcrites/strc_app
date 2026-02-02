@@ -13,12 +13,15 @@ import PayoutsDetailScreen from './src/screens/PayoutsDetailScreen';
 import HoldingsDetailScreen from './src/screens/HoldingsDetailScreen';
 import TransactionScreen from './src/screens/TransactionScreen';
 import ReviewOrderScreen from './src/screens/ReviewOrderScreen';
+import BankLinkingScreen from './src/screens/BankLinkingScreen';
 
 const Stack = createNativeStackNavigator();
 
 function AppNavigator() {
-  const { isAuthenticated, loading, logout } = useAuth();
+  const { isAuthenticated, loading, logout, token } = useAuth();
   const navigationRef = React.useRef<any>(null);
+  const [hasLinkedAccount, setHasLinkedAccount] = useState<boolean | null>(null);
+  const [checkingLinkedAccount, setCheckingLinkedAccount] = useState(true);
 
   // Listen for 401 errors globally
   useEffect(() => {
@@ -36,6 +39,53 @@ function AppNavigator() {
       delete (global as any).handle401Error;
     };
   }, [logout]);
+
+  // Check if user has linked bank account and navigate if needed
+  useEffect(() => {
+    if (!isAuthenticated || !token || !navigationRef.current) {
+      setHasLinkedAccount(null);
+      setCheckingLinkedAccount(false);
+      return;
+    }
+
+    const checkLinkedAccount = async () => {
+      try {
+        setCheckingLinkedAccount(true);
+        const { api } = await import('./src/services/api');
+        const response = await api.get<{ has_linked_account: boolean }>(
+          '/plaid/has-linked-account',
+          token
+        );
+        setHasLinkedAccount(response.has_linked_account);
+        
+        // Navigate to BankLinking if no account linked
+        // Only navigate if we're authenticated and navigator is ready
+        if (!response.has_linked_account && navigationRef.current) {
+          // Small delay to ensure Main screen is mounted
+          setTimeout(() => {
+            try {
+              const currentRoute = navigationRef.current?.getCurrentRoute();
+              // Only navigate if we're on Main screen (not already on BankLinking)
+              if (currentRoute?.name === 'Main') {
+                navigationRef.current?.navigate('BankLinking');
+              }
+            } catch (error) {
+              console.warn('Navigation error:', error);
+            }
+          }, 1000);
+        }
+      } catch (error: any) {
+        console.error('Error checking linked account:', error);
+        // If check fails (404 or other), assume no linked account (user can still proceed)
+        // Don't navigate on error - let user use the app
+        setHasLinkedAccount(false);
+      } finally {
+        setCheckingLinkedAccount(false);
+      }
+    };
+
+    checkLinkedAccount();
+  }, [isAuthenticated, token]);
 
   // Handle deep links for asset sharing
   useEffect(() => {
@@ -103,11 +153,12 @@ function AppNavigator() {
           },
         },
         Settings: 'settings',
+        BankLinking: 'plaid/callback',
       },
     },
   };
 
-  if (loading) {
+  if (loading || checkingLinkedAccount) {
     return null; // Or a loading screen
   }
 
@@ -226,6 +277,19 @@ function AppNavigator() {
                 headerLeft: () => null,
                 header: () => null,
                 animation: 'slide_from_right',
+                gestureEnabled: true,
+              }}
+            />
+            <Stack.Screen 
+              name="BankLinking" 
+              component={BankLinkingScreen}
+              options={{
+                headerShown: false,
+                headerBackVisible: false,
+                headerBackTitleVisible: false,
+                headerLeft: () => null,
+                header: () => null,
+                animation: 'slide_from_bottom',
                 gestureEnabled: true,
               }}
             />

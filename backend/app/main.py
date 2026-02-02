@@ -4,7 +4,7 @@ FastAPI entrypoint for strc_tracker backend
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.api.routes import positions, dividends, users, dashboard, portfolio, assets
+from app.api.routes import positions, dividends, users, dashboard, portfolio, assets, plaid
 from app.core.config import settings
 from app.services.portfolio_scheduler import start_scheduler as start_portfolio_scheduler, stop_scheduler as stop_portfolio_scheduler
 import logging
@@ -51,6 +51,7 @@ app.add_middleware(
 app.include_router(users.router, prefix="/api", tags=["users"])
 app.include_router(positions.router, prefix="/api", tags=["positions"])
 app.include_router(dividends.router, prefix="/api", tags=["dividends"])
+app.include_router(plaid.router, prefix="/api", tags=["plaid"])
 app.include_router(dashboard.router)
 app.include_router(portfolio.router)
 app.include_router(assets.router)
