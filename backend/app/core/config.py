@@ -58,7 +58,8 @@ class Settings(BaseSettings):
     # Includes Expo default ports: 19000 (Metro), 19006 (Expo Go), 8081 (Metro alternative)
     # Also includes common Expo Go URLs for physical devices
     # For development, use "*" to allow all origins (set in .env: CORS_ORIGINS=*)
-    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:19006,http://localhost:19000,http://localhost:8081,exp://localhost:8081,exp://192.168.1.152:8081,http://192.168.1.152:19000,http://192.168.1.152:19006"
+    # Default to "*" in development to allow connections from any network
+    CORS_ORIGINS: str = "*"
     
     @property
     def cors_origins_list(self) -> List[str]:

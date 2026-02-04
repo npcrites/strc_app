@@ -20,8 +20,15 @@ export default function LoginScreen() {
   const { isDark } = useTheme();
   const [loading, setLoading] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
+  // Use device URL for mobile platforms in development (Expo Go needs network IP)
+  const isMobilePlatform = Platform.OS === 'ios' || Platform.OS === 'android';
+  const isExpoGo = Constants.executionEnvironment === 'storeClient';
+  const useDeviceUrl = __DEV__ && (isExpoGo || isMobilePlatform);
+  
   const apiBaseUrl = __DEV__
-    ? (Constants.expoConfig?.extra?.apiUrl || 'http://localhost:8000/api')
+    ? (useDeviceUrl 
+        ? (Constants.expoConfig?.extra?.apiUrlDevice || 'http://10.50.218.180:8000/api')
+        : (Constants.expoConfig?.extra?.apiUrl || 'http://localhost:8000/api'))
     : 'https://api.strctracker.com/api';
 
   const handleDemoLogin = async () => {

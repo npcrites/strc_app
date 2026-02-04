@@ -30,6 +30,6 @@ httpx==0.25.2
 apscheduler>=3.10.0
 
 # Plaid integration
-plaid-python==11.0.0
+plaid-python==11.1.0
 
 

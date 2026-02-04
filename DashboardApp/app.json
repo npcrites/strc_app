@@ -32,7 +32,7 @@
     },
     "extra": {
       "apiUrl": "http://localhost:8000/api",
-      "apiUrlDevice": "http://192.168.1.152:8000/api"
+      "apiUrlDevice": "http://10.50.218.180:8000/api"
     }
   }
 }

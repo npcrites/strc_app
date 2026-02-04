@@ -9,7 +9,7 @@ const API_BASE_URL = __DEV__
   : 'https://api.strctracker.com/api';
 
 const API_BASE_URL_DEVICE = __DEV__
-  ? (Constants.expoConfig?.extra?.apiUrlDevice || 'http://192.168.1.155:8000/api')
+  ? (Constants.expoConfig?.extra?.apiUrlDevice || 'http://10.50.218.180:8000/api')
   : 'https://api.strctracker.com/api';
 
 export interface ApiError {
@@ -29,28 +29,55 @@ class ApiService {
       // For Expo Go, Constants.isDevice should be true on physical devices
       const isPhysicalDevice = Constants.isDevice === true;
       
-      // Fallback: If we're on iOS/Android (not web), assume it's a physical device
-      // This helps when Constants.isDevice doesn't work correctly
+      // Check if we're on a mobile platform (iOS/Android)
       const isMobilePlatform = Platform.OS === 'ios' || Platform.OS === 'android';
-      const useDeviceUrl = isPhysicalDevice || (isMobilePlatform && __DEV__);
+      
+      // Check if we're running in Expo Go (not a standalone build)
+      const isExpoGo = Constants.executionEnvironment === 'storeClient';
+      
+      // For Expo Go, ALWAYS use device URL (network IP) - localhost won't work
+      // For simulators, we can use localhost
+      // Rule: If it's Expo Go OR mobile platform (and not a confirmed simulator), use device URL
+      // In Expo Go, isDevice might be undefined, so we treat undefined as "not a simulator"
+      const isSimulator = Platform.OS === 'ios' && Constants.isDevice === false && !isExpoGo;
+      // Force device URL for Expo Go or any mobile platform (unless confirmed simulator)
+      // If isDevice is undefined (common in Expo Go), assume it's a physical device
+      // ALWAYS use device URL for mobile platforms unless we're 100% sure it's a simulator
+      const useDeviceUrl = isExpoGo || (isMobilePlatform && !isSimulator);
       
       console.log('🔍 Device detection:', {
         isDevice: Constants.isDevice,
         platform: Platform.OS,
         __DEV__: __DEV__,
         isMobilePlatform: isMobilePlatform,
+        isExpoGo: isExpoGo,
+        isPhysicalDevice: isPhysicalDevice,
+        isSimulator: isSimulator,
         useDeviceUrl: useDeviceUrl,
         apiUrl: Constants.expoConfig?.extra?.apiUrl,
         apiUrlDevice: Constants.expoConfig?.extra?.apiUrlDevice,
+        executionEnvironment: Constants.executionEnvironment,
+        allConstants: JSON.stringify({
+          isDevice: Constants.isDevice,
+          executionEnvironment: Constants.executionEnvironment,
+          appOwnership: Constants.appOwnership,
+        }),
       });
       
+      // Use device URL for mobile platforms (Expo Go on physical devices)
+      // Use localhost only for simulators or web
       if (useDeviceUrl) {
         this.baseUrl = API_BASE_URL_DEVICE;
         console.log('📱 Using device API URL:', this.baseUrl);
-        console.log('   Reason: isDevice=' + isPhysicalDevice + ', isMobilePlatform=' + isMobilePlatform);
+        console.log('   Reason: isMobilePlatform=' + isMobilePlatform + ', isSimulator=' + isSimulator + ', isExpoGo=' + isExpoGo);
+        console.log('   ⚠️  If connection fails, ensure:');
+        console.log('      1. Phone and computer are on same WiFi');
+        console.log('      2. Backend is running on ' + API_BASE_URL_DEVICE);
+        console.log('      3. Firewall allows port 8000');
       } else {
         this.baseUrl = API_BASE_URL;
         console.log('💻 Using localhost API URL:', this.baseUrl);
+        console.log('   Reason: Not a mobile platform or is a simulator');
       }
       
       console.log('✅ API Service initialized with baseUrl:', this.baseUrl);
@@ -107,8 +134,9 @@ class ApiService {
               console.error('   1. Both devices are on the same WiFi network');
               console.error('   2. Server is running: cd backend && ./start_server.sh');
               console.error('   3. Firewall allows connections on port 8000');
-              console.error('   4. IP address is correct (current: 192.168.1.152)');
+              console.error('   4. IP address is correct (current: ' + API_BASE_URL_DEVICE.replace('/api', '') + ')');
               console.error('   5. Update app.json apiUrlDevice if IP changed');
+              console.error('   6. Run ./update_ip.sh to auto-update IP');
             } else {
               console.error('❌ Backend health check failed:', err.message);
               console.error('   Tried URL:', healthUrl);
