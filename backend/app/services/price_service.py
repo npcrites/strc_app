@@ -37,23 +37,41 @@ class PriceService:
     def get_all_active_symbols(self, db: Session) -> List[str]:
         """
         Get all unique symbols from positions with quantity > 0
+        Only returns allowed tickers (STRC, STRD, STRK, STRF, SATA) plus MSTR for parent calculations
         
         Args:
             db: Database session
             
         Returns:
-            List of unique uppercase symbols
+            List of unique uppercase symbols (filtered to allowed tickers + MSTR)
         """
         try:
+            from app.core.config import settings
+            
             # Query distinct tickers from positions with shares > 0
             positions = db.query(Position.ticker).filter(
                 Position.shares > 0
             ).distinct().all()
             
             # Extract and normalize symbols (uppercase, deduplicate)
-            symbols = list(set([pos.ticker.upper().strip() for pos in positions if pos.ticker]))
+            all_symbols = list(set([pos.ticker.upper().strip() for pos in positions if pos.ticker]))
             
-            logger.debug(f"Found {len(symbols)} active symbols: {symbols}")
+            # Filter to only allowed tickers + MSTR (for parent calculations)
+            allowed_tickers_upper = {t.upper() for t in settings.ALLOWED_TICKERS}
+            allowed_tickers_upper.add("MSTR")  # Always include MSTR for parent NAV calculations
+            allowed_tickers_upper.add("ASST")  # Always include ASST for parent NAV calculations (parent of SATA)
+            
+            # Only return symbols that are in the allowed list
+            symbols = [s for s in all_symbols if s in allowed_tickers_upper]
+            
+            # Always ensure MSTR and ASST are included (needed for parent NAV calculations)
+            # even if user doesn't have positions in them
+            if "MSTR" not in symbols:
+                symbols.append("MSTR")
+            if "ASST" not in symbols:
+                symbols.append("ASST")
+            
+            logger.debug(f"Found {len(all_symbols)} total symbols, filtered to {len(symbols)} allowed symbols: {symbols}")
             return symbols
             
         except Exception as e:

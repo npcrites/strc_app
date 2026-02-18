@@ -90,8 +90,6 @@ def seed_database(overwrite: bool = False):
         print()
         print(f"📊 Summary:")
         print(f"   Users: 1 (ID: {summary['user_id']})")
-        print(f"   Brokerages: {summary['brokerages_count']}")
-        print(f"   Accounts: {summary['accounts_count']}")
         print(f"   Positions: {summary['positions_count']}")
         print(f"   Dividends: {summary['dividends_count']}")
         print(f"   Ex-Dates: {summary['ex_dates_count']}")

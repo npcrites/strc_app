@@ -6,10 +6,8 @@
     "sdkVersion": "54.0.0",
     "scheme": "strctracker",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -22,17 +20,15 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.dashboardapp.app"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
     },
     "extra": {
       "apiUrl": "http://localhost:8000/api",
-      "apiUrlDevice": "http://10.50.218.180:8000/api"
+      "apiUrlDevice": "http://192.168.4.153:8000/api"
     }
   }
 }

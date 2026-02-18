@@ -2171,6 +2171,29 @@ async def get_asset_price_history(
                 series=[]
             )
         
+        # If no snapshots after all filtering, fall back to Alpaca or current price
+        if not snapshots:
+            logger.warning(
+                f"No snapshots found for {ticker_upper} after filtering. "
+                f"Falling back to Alpaca or current price."
+            )
+            historical_series = _fetch_historical_prices_from_alpaca(
+                ticker_upper, 
+                tr.start_date, 
+                tr.end_date, 
+                tr.granularity
+            )
+            
+            if historical_series:
+                return AssetPriceHistory(
+                    ticker=ticker_upper,
+                    name=asset_name,
+                    current_price=current_price,
+                    granularity=tr.granularity.value,
+                    series=historical_series
+                )
+            # If Alpaca also fails, continue to use current price only (handled below)
+        
         # Determine granularity (same logic as dashboard)
         granularity = tr.granularity
         
@@ -2268,12 +2291,37 @@ async def get_asset_price_history(
                         # For 3M and 1Y, pass ALL snapshots (not filtered) to ensure we have data for backfilling
                         # The daily function will filter to trading days and find market close snapshots
                         # We need all snapshots to properly backfill missing trading days
+                        snapshots_before = len(snapshots)
                         snapshots = _generate_daily_market_hours_snapshots(
                             snapshots, tr.start_date, tr.end_date, market_hours_service
                         )
                         logger.info(
-                            f"Generated {len(snapshots)} daily snapshots for {ticker_upper} {time_range} market hours"
+                            f"Generated {len(snapshots)} daily snapshots for {ticker_upper} {time_range} market hours "
+                            f"(from {snapshots_before} original snapshots)"
                         )
+                        
+                        # If no snapshots after filtering, fall back to Alpaca or current price
+                        if not snapshots:
+                            logger.warning(
+                                f"No snapshots after market hours filtering for {ticker_upper} {time_range}. "
+                                f"Falling back to Alpaca or current price."
+                            )
+                            historical_series = _fetch_historical_prices_from_alpaca(
+                                ticker_upper, 
+                                tr.start_date, 
+                                tr.end_date, 
+                                tr.granularity
+                            )
+                            
+                            if historical_series:
+                                return AssetPriceHistory(
+                                    ticker=ticker_upper,
+                                    name=asset_name,
+                                    current_price=current_price,
+                                    granularity=tr.granularity.value,
+                                    series=historical_series
+                                )
+                            # If Alpaca also fails, continue to use current price only
                     else:
                         snapshots = _generate_hourly_market_hours_snapshots(filtered_snapshots, market_hours_service)
                         logger.info(
@@ -2316,13 +2364,38 @@ async def get_asset_price_history(
                 elif time_range == "1Y":
                     # For 1Y time range, generate exact daily snapshots for all calendar days
                     # Generate daily snapshots for extended hours (all days)
+                    snapshots_before = len(snapshots)
                     snapshots = _generate_daily_extended_hours_snapshots(
                         snapshots, tr.start_date, tr.end_date, market_hours_service
                     )
                     
                     logger.info(
-                        f"Generated {len(snapshots)} daily snapshots for {ticker_upper} 1Y extended hours"
+                        f"Generated {len(snapshots)} daily snapshots for {ticker_upper} 1Y extended hours "
+                        f"(from {snapshots_before} original snapshots)"
                     )
+                    
+                    # If no snapshots after generation, fall back to Alpaca
+                    if not snapshots:
+                        logger.warning(
+                            f"No snapshots generated for {ticker_upper} 1Y extended hours. "
+                            f"Falling back to Alpaca."
+                        )
+                        historical_series = _fetch_historical_prices_from_alpaca(
+                            ticker_upper, 
+                            tr.start_date, 
+                            tr.end_date, 
+                            tr.granularity
+                        )
+                        
+                        if historical_series:
+                            return AssetPriceHistory(
+                                ticker=ticker_upper,
+                                name=asset_name,
+                                current_price=current_price,
+                                granularity=tr.granularity.value,
+                                series=historical_series
+                            )
+                        # If Alpaca also fails, continue to use current price only
                 else:
                     # For other time ranges (ALL), use existing normalization logic
                     # For extended hours mode, fill in missing calendar days with previous trading day's closing price
@@ -2350,14 +2423,45 @@ async def get_asset_price_history(
             
             # Convert snapshots (tuples) to PricePoint objects
             # Snapshots are tuples: (timestamp, price_per_share, current_value)
-            series = [
-                PricePoint(
+            # Filter out snapshots with None prices and use current_price as fallback
+            series = []
+            for snap in snapshots:
+                snap_price = snap[1]  # price_per_share
+                # Use current_price if snapshot price is None
+                if snap_price is None:
+                    if current_price:
+                        snap_price = current_price
+                    else:
+                        # Skip this snapshot if no price available
+                        continue
+                series.append(PricePoint(
                     timestamp=snap[0],  # timestamp
-                    price=float(snap[1]),  # price_per_share
+                    price=float(snap_price),  # price_per_share (or current_price fallback)
                     value=float(snap[2]) if snap[2] else None  # current_value
+                ))
+            
+            # If no series data after processing, fall back to Alpaca or current price
+            if not series:
+                logger.warning(
+                    f"No price history data available for {ticker_upper} after processing snapshots. "
+                    f"Falling back to Alpaca or current price."
                 )
-                for snap in snapshots
-            ]
+                historical_series = _fetch_historical_prices_from_alpaca(
+                    ticker_upper, 
+                    tr.start_date, 
+                    tr.end_date, 
+                    tr.granularity
+                )
+                
+                if historical_series:
+                    return AssetPriceHistory(
+                        ticker=ticker_upper,
+                        name=asset_name,
+                        current_price=current_price,
+                        granularity=tr.granularity.value,
+                        series=historical_series
+                    )
+                # If Alpaca also fails, continue to use current price only (handled below)
         else:
             # Only bucket if we have an extremely large dataset (>10k snapshots)
             # Use hourly bucketing instead of daily to preserve more granularity
@@ -2462,14 +2566,22 @@ async def get_asset_price_history(
             
             # Convert snapshots (tuples) to PricePoint objects
             # Snapshots are tuples: (timestamp, price_per_share, current_value)
-            series = [
-                PricePoint(
+            # Filter out snapshots with None prices and use current_price as fallback
+            series = []
+            for snap in bucketed_list:
+                snap_price = snap[1]  # price_per_share
+                # Use current_price if snapshot price is None
+                if snap_price is None:
+                    if current_price:
+                        snap_price = current_price
+                    else:
+                        # Skip this snapshot if no price available
+                        continue
+                series.append(PricePoint(
                     timestamp=snap[0],  # timestamp
-                    price=float(snap[1]),  # price_per_share
+                    price=float(snap_price),  # price_per_share (or current_price fallback)
                     value=float(snap[2]) if snap[2] else None  # current_value
-                )
-                for snap in bucketed_list
-            ]
+                ))
             logger.info(f"After bucketing and normalization: {len(series)} data points")
         
         # Add current price as the latest point if we have it

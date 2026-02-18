@@ -9,9 +9,8 @@ from decimal import Decimal
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 
-from app.models import User, Brokerage, Account, Position, Dividend, ExDate
+from app.models import User, Position, Dividend, ExDate
 from app.models.dividend import DividendStatus
-from app.core.security import get_password_hash
 
 
 class MockDataFactory:
@@ -21,7 +20,7 @@ class MockDataFactory:
     def create_demo_user(
         db: Session,
         email: str = "demo@example.com",
-        password: str = "demo123",
+        password: str = None,  # Not used - OAuth only
         full_name: str = "Demo User",
         overwrite: bool = False
     ) -> User:
@@ -31,7 +30,7 @@ class MockDataFactory:
         Args:
             db: Database session
             email: User email
-            password: User password (will be hashed)
+            password: Not used (OAuth-only authentication)
             full_name: User full name
             overwrite: If True, delete existing user and recreate
         
@@ -50,7 +49,6 @@ class MockDataFactory:
         
         user = User(
             email=email,
-            hashed_password=get_password_hash(password),
             full_name=full_name,
             is_active=True
         )
@@ -60,119 +58,9 @@ class MockDataFactory:
         return user
     
     @staticmethod
-    def create_brokerages(
-        db: Session,
-        user_id: int,
-        names: Optional[List[str]] = None
-    ) -> List[Brokerage]:
-        """
-        Create brokerages for a user.
-        
-        Args:
-            db: Database session
-            user_id: User ID
-            names: List of brokerage names (default: ["Fidelity Investments", "Charles Schwab"])
-        
-        Returns:
-            List of Brokerage objects
-        """
-        if names is None:
-            names = ["Fidelity Investments", "Charles Schwab"]
-        
-        brokerages = []
-        for name in names:
-            # Check if brokerage already exists
-            existing = db.query(Brokerage).filter(
-                Brokerage.user_id == user_id,
-                Brokerage.name == name
-            ).first()
-            
-            if existing:
-                brokerages.append(existing)
-                continue
-            
-            brokerage = Brokerage(
-                user_id=user_id,
-                name=name
-            )
-            db.add(brokerage)
-            brokerages.append(brokerage)
-        
-        db.commit()
-        for brokerage in brokerages:
-            db.refresh(brokerage)
-        
-        return brokerages
-    
-    @staticmethod
-    def create_accounts(
-        db: Session,
-        user_id: int,
-        brokerages: List[Brokerage],
-        accounts_config: Optional[List[Dict]] = None
-    ) -> List[Account]:
-        """
-        Create accounts for a user.
-        
-        Args:
-            db: Database session
-            user_id: User ID
-            brokerages: List of Brokerage objects
-            accounts_config: List of account config dicts (if None, uses defaults)
-        
-        Returns:
-            List of Account objects
-        """
-        if accounts_config is None:
-            accounts_config = [
-                {
-                    "brokerage_id": brokerages[0].id,
-                    "plaid_account_id": "acc_sample_fidelity_brokerage",
-                    "name": "Fidelity Brokerage Account",
-                    "type": "investment",
-                    "subtype": "brokerage",
-                    "balance": Decimal("4725.00")  # STRC + SATA = 3150 + 1575 = 4725
-                },
-                {
-                    "brokerage_id": brokerages[1].id,
-                    "plaid_account_id": "acc_sample_schwab_brokerage",
-                    "name": "Schwab Brokerage Account",
-                    "type": "investment",
-                    "subtype": "brokerage",
-                    "balance": Decimal("1890.00")  # MSFT + MSTR-A = 1050 + 840 = 1890
-                },
-            ]
-        
-        accounts = []
-        for acc_data in accounts_config:
-            # Check if account already exists
-            existing = db.query(Account).filter(
-                Account.user_id == user_id,
-                Account.plaid_account_id == acc_data["plaid_account_id"]
-            ).first()
-            
-            if existing:
-                accounts.append(existing)
-                continue
-            
-            account = Account(
-                user_id=user_id,
-                **acc_data
-            )
-            db.add(account)
-            accounts.append(account)
-        
-        db.commit()
-        for account in accounts:
-            db.refresh(account)
-        
-        return accounts
-    
-    @staticmethod
     def create_positions(
         db: Session,
         user_id: int,
-        accounts: List[Account],
         positions_config: Optional[List[Dict]] = None
     ) -> List[Position]:
         """
@@ -181,66 +69,68 @@ class MockDataFactory:
         Args:
             db: Database session
             user_id: User ID
-            accounts: List of Account objects
             positions_config: List of position config dicts (if None, uses defaults)
         
         Returns:
             List of Position objects
         """
         if positions_config is None:
+            # Only create positions for allowed tickers: STRC, STRD, STRK, STRF, SATA
             positions_config = [
                 {
-                    "account_id": accounts[0].id,
                     "ticker": "STRC",
-                    "name": "Starco Preferred Stock",
+                    "name": "STRC Preferred Stock",
                     "shares": Decimal("30.000000"),
                     "cost_basis": Decimal("3000.00"),
                     "market_value": Decimal("3150.00"),
                     "asset_type": "preferred_stock"
                 },
                 {
-                    "account_id": accounts[0].id,
                     "ticker": "SATA",
-                    "name": "Sata Preferred Stock",
+                    "name": "SATA Preferred Stock",
                     "shares": Decimal("15.000000"),
                     "cost_basis": Decimal("1500.00"),
                     "market_value": Decimal("1575.00"),
                     "asset_type": "preferred_stock"
                 },
                 {
-                    "account_id": accounts[1].id,
-                    "ticker": "MSFT",
-                    "name": "Microsoft Corporation",
-                    "shares": Decimal("3.000000"),
-                    "cost_basis": Decimal("900.00"),
-                    "market_value": Decimal("1050.00"),
-                    "asset_type": "common_stock"
+                    "ticker": "STRD",
+                    "name": "STRD Preferred Stock",
+                    "shares": Decimal("25.000000"),
+                    "cost_basis": Decimal("2500.00"),
+                    "market_value": Decimal("2625.00"),
+                    "asset_type": "preferred_stock"
                 },
                 {
-                    "account_id": accounts[1].id,
-                    "ticker": "MSTR-A",
-                    "name": "MicroStrategy Preferred Series A",
-                    "shares": Decimal("8.000000"),
-                    "cost_basis": Decimal("800.00"),
-                    "market_value": Decimal("840.00"),
+                    "ticker": "STRK",
+                    "name": "STRK Preferred Stock",
+                    "shares": Decimal("20.000000"),
+                    "cost_basis": Decimal("2000.00"),
+                    "market_value": Decimal("2100.00"),
+                    "asset_type": "preferred_stock"
+                },
+                {
+                    "ticker": "STRF",
+                    "name": "STRF Preferred Stock",
+                    "shares": Decimal("15.000000"),
+                    "cost_basis": Decimal("1500.00"),
+                    "market_value": Decimal("1575.00"),
                     "asset_type": "preferred_stock"
                 },
             ]
         
         positions = []
         for pos_data in positions_config:
-            # Check if position already exists (by ticker and account)
+            # Check if position already exists (by ticker and user)
             existing = db.query(Position).filter(
                 Position.user_id == user_id,
-                Position.account_id == pos_data["account_id"],
                 Position.ticker == pos_data["ticker"]
             ).first()
             
             if existing:
                 # Update existing position
                 for key, value in pos_data.items():
-                    if key != "account_id":  # Don't update account_id
-                        setattr(existing, key, value)
+                    setattr(existing, key, value)
                 existing.snapshot_timestamp = datetime.utcnow()
                 positions.append(existing)
                 continue
@@ -326,10 +216,10 @@ class MockDataFactory:
                         "source": "manual"
                     })
             
-            # Find MSTR-A positions - quarterly dividends
-            mstr_positions = [p for p in positions if p.ticker == "MSTR-A"]
-            for pos in mstr_positions:
-                dividend_per_share = Decimal("0.50")  # $0.50 per share quarterly
+            # Find STRD positions - quarterly dividends
+            strd_positions = [p for p in positions if p.ticker == "STRD"]
+            for pos in strd_positions:
+                dividend_per_share = Decimal("0.35")  # $0.35 per share quarterly
                 for quarter_offset in range(-2, 1):  # Past 2 quarters + 1 upcoming
                     pay_date = today + timedelta(days=90 * quarter_offset)
                     ex_date = pay_date - timedelta(days=15)
@@ -337,7 +227,7 @@ class MockDataFactory:
                     
                     dividends_config.append({
                         "position_id": pos.id,
-                        "ticker": "MSTR-A",
+                        "ticker": "STRD",
                         "amount": amount,
                         "pay_date": pay_date,
                         "status": DividendStatus.PAID if quarter_offset < 0 else DividendStatus.UPCOMING,
@@ -347,18 +237,39 @@ class MockDataFactory:
                         "source": "manual"
                     })
             
-            # Find MSFT positions - quarterly dividends (common stock)
-            msft_positions = [p for p in positions if p.ticker == "MSFT"]
-            for pos in msft_positions:
-                dividend_per_share = Decimal("0.75")  # $0.75 per share quarterly (typical MSFT)
+            # Find STRK positions - quarterly dividends
+            strk_positions = [p for p in positions if p.ticker == "STRK"]
+            for pos in strk_positions:
+                dividend_per_share = Decimal("0.40")  # $0.40 per share quarterly
                 for quarter_offset in range(-2, 1):  # Past 2 quarters + 1 upcoming
-                    pay_date = today + timedelta(days=90 * quarter_offset + 30)  # Offset by 30 days
-                    ex_date = pay_date - timedelta(days=10)
+                    pay_date = today + timedelta(days=90 * quarter_offset + 15)
+                    ex_date = pay_date - timedelta(days=15)
                     amount = dividend_per_share * pos.shares
                     
                     dividends_config.append({
                         "position_id": pos.id,
-                        "ticker": "MSFT",
+                        "ticker": "STRK",
+                        "amount": amount,
+                        "pay_date": pay_date,
+                        "status": DividendStatus.PAID if quarter_offset < 0 else DividendStatus.UPCOMING,
+                        "dividend_per_share": dividend_per_share,
+                        "shares_at_ex_date": pos.shares,
+                        "ex_date": ex_date,
+                        "source": "manual"
+                    })
+            
+            # Find STRF positions - quarterly dividends
+            strf_positions = [p for p in positions if p.ticker == "STRF"]
+            for pos in strf_positions:
+                dividend_per_share = Decimal("0.30")  # $0.30 per share quarterly
+                for quarter_offset in range(-2, 1):  # Past 2 quarters + 1 upcoming
+                    pay_date = today + timedelta(days=90 * quarter_offset + 30)
+                    ex_date = pay_date - timedelta(days=15)
+                    amount = dividend_per_share * pos.shares
+                    
+                    dividends_config.append({
+                        "position_id": pos.id,
+                        "ticker": "STRF",
                         "amount": amount,
                         "pay_date": pay_date,
                         "status": DividendStatus.PAID if quarter_offset < 0 else DividendStatus.UPCOMING,
@@ -433,18 +344,26 @@ class MockDataFactory:
                     "notes": "Bi-monthly dividend"
                 },
                 {
-                    "ticker": "MSTR-A",
+                    "ticker": "STRD",
                     "ex_date": today + timedelta(days=75),
-                    "dividend_amount": Decimal("0.50"),
+                    "dividend_amount": Decimal("0.35"),
                     "pay_date": today + timedelta(days=90),
                     "source": "manual",
                     "notes": "Quarterly dividend"
                 },
                 {
-                    "ticker": "MSFT",
-                    "ex_date": today + timedelta(days=20),
-                    "dividend_amount": Decimal("0.75"),
-                    "pay_date": today + timedelta(days=35),
+                    "ticker": "STRK",
+                    "ex_date": today + timedelta(days=90),
+                    "dividend_amount": Decimal("0.40"),
+                    "pay_date": today + timedelta(days=105),
+                    "source": "manual",
+                    "notes": "Quarterly dividend"
+                },
+                {
+                    "ticker": "STRF",
+                    "ex_date": today + timedelta(days=105),
+                    "dividend_amount": Decimal("0.30"),
+                    "pay_date": today + timedelta(days=120),
                     "source": "manual",
                     "notes": "Quarterly dividend"
                 },
@@ -502,14 +421,8 @@ class MockDataFactory:
             db, user_email, user_password, overwrite=overwrite
         )
         
-        # Create brokerages
-        brokerages = MockDataFactory.create_brokerages(db, user.id)
-        
-        # Create accounts
-        accounts = MockDataFactory.create_accounts(db, user.id, brokerages)
-        
-        # Create positions
-        positions = MockDataFactory.create_positions(db, user.id, accounts)
+        # Create positions (no brokerages/accounts needed)
+        positions = MockDataFactory.create_positions(db, user.id)
         
         # Create dividends
         dividends = MockDataFactory.create_dividends(db, user.id, positions)
@@ -519,16 +432,12 @@ class MockDataFactory:
         
         return {
             "user": user,
-            "brokerages": brokerages,
-            "accounts": accounts,
             "positions": positions,
             "dividends": dividends,
             "ex_dates": ex_dates,
             "summary": {
                 "user_id": user.id,
                 "user_email": user.email,
-                "brokerages_count": len(brokerages),
-                "accounts_count": len(accounts),
                 "positions_count": len(positions),
                 "dividends_count": len(dividends),
                 "ex_dates_count": len(ex_dates),

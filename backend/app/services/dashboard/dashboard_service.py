@@ -122,9 +122,24 @@ class DashboardService:
         # Sort all activity items chronologically
         activity_items.sort(key=lambda x: x.timestamp)
         
-        # Handle edge case: empty portfolio
-        if not end_snapshots and not cash_flows:
-            return DashboardService._empty_dashboard()
+        # Check if user has current positions (even if no historical snapshots)
+        current_position_snapshots = DashboardService._get_current_position_snapshots(db, user_id)
+        
+        # Handle edge case: empty portfolio (no snapshots, no cash flows, and no current positions)
+        if not end_snapshots and not cash_flows and not current_position_snapshots:
+            return DashboardService._empty_dashboard(granularity=time_range.granularity.value)
+        
+        # If no historical snapshots but user has current positions, use current positions
+        # This handles the case where positions exist but no historical snapshots have been created yet
+        if not end_snapshots and current_position_snapshots:
+            # Use current positions as end_snapshots
+            end_snapshots = current_position_snapshots
+            # Also use current positions as start if no start_snapshots
+            if not start_snapshots:
+                start_snapshots = current_position_snapshots
+            # Create a single daily snapshot point from current positions if none exist
+            if not daily_snapshots:
+                daily_snapshots = current_position_snapshots
         
         # Always use live prices for current total (updates every 30 seconds)
         # Total portfolio value = (shares * current_price) + dividends paid out
@@ -394,11 +409,12 @@ class DashboardService:
         return float(total_value)
     
     @staticmethod
-    def _empty_dashboard() -> DashboardSnapshot:
+    def _empty_dashboard(granularity: str = "daily") -> DashboardSnapshot:
         """Return empty dashboard for users with no positions"""
         now = datetime.now()
         return DashboardSnapshot(
             as_of=now,
+            granularity=granularity,
             total=TotalMetrics(
                 current=0.0,
                 start=0.0,

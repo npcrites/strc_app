@@ -24,60 +24,35 @@ class ApiService {
     // Constants.isDevice is true for physical devices, false for simulators
     // For Expo Go on physical devices, we need to use the network IP
     if (__DEV__) {
-      // Check if we're on a physical device
+      // Simplified device detection logic
       // Constants.isDevice is true for physical devices, false for simulators
-      // For Expo Go, Constants.isDevice should be true on physical devices
+      // For simulators, use localhost; for physical devices, use network IP
       const isPhysicalDevice = Constants.isDevice === true;
-      
-      // Check if we're on a mobile platform (iOS/Android)
-      const isMobilePlatform = Platform.OS === 'ios' || Platform.OS === 'android';
-      
-      // Check if we're running in Expo Go (not a standalone build)
-      const isExpoGo = Constants.executionEnvironment === 'storeClient';
-      
-      // For Expo Go, ALWAYS use device URL (network IP) - localhost won't work
-      // For simulators, we can use localhost
-      // Rule: If it's Expo Go OR mobile platform (and not a confirmed simulator), use device URL
-      // In Expo Go, isDevice might be undefined, so we treat undefined as "not a simulator"
-      const isSimulator = Platform.OS === 'ios' && Constants.isDevice === false && !isExpoGo;
-      // Force device URL for Expo Go or any mobile platform (unless confirmed simulator)
-      // If isDevice is undefined (common in Expo Go), assume it's a physical device
-      // ALWAYS use device URL for mobile platforms unless we're 100% sure it's a simulator
-      const useDeviceUrl = isExpoGo || (isMobilePlatform && !isSimulator);
       
       console.log('🔍 Device detection:', {
         isDevice: Constants.isDevice,
         platform: Platform.OS,
         __DEV__: __DEV__,
-        isMobilePlatform: isMobilePlatform,
-        isExpoGo: isExpoGo,
         isPhysicalDevice: isPhysicalDevice,
-        isSimulator: isSimulator,
-        useDeviceUrl: useDeviceUrl,
         apiUrl: Constants.expoConfig?.extra?.apiUrl,
         apiUrlDevice: Constants.expoConfig?.extra?.apiUrlDevice,
-        executionEnvironment: Constants.executionEnvironment,
-        allConstants: JSON.stringify({
-          isDevice: Constants.isDevice,
-          executionEnvironment: Constants.executionEnvironment,
-          appOwnership: Constants.appOwnership,
-        }),
       });
       
-      // Use device URL for mobile platforms (Expo Go on physical devices)
-      // Use localhost only for simulators or web
-      if (useDeviceUrl) {
+      // Only use device URL for confirmed physical devices
+      // Simulators (isDevice === false) should use localhost
+      if (isPhysicalDevice) {
         this.baseUrl = API_BASE_URL_DEVICE;
         console.log('📱 Using device API URL:', this.baseUrl);
-        console.log('   Reason: isMobilePlatform=' + isMobilePlatform + ', isSimulator=' + isSimulator + ', isExpoGo=' + isExpoGo);
+        console.log('   Reason: Running on physical device');
         console.log('   ⚠️  If connection fails, ensure:');
         console.log('      1. Phone and computer are on same WiFi');
-        console.log('      2. Backend is running on ' + API_BASE_URL_DEVICE);
-        console.log('      3. Firewall allows port 8000');
+        console.log('      2. Backend is running: cd backend && ./start_server.sh');
+        console.log('      3. Firewall allows connections on port 8000');
+        console.log('      4. IP address is correct:', API_BASE_URL_DEVICE.replace('/api', ''));
       } else {
         this.baseUrl = API_BASE_URL;
         console.log('💻 Using localhost API URL:', this.baseUrl);
-        console.log('   Reason: Not a mobile platform or is a simulator');
+        console.log('   Reason: Running on simulator/emulator');
       }
       
       console.log('✅ API Service initialized with baseUrl:', this.baseUrl);

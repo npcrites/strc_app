@@ -4,10 +4,12 @@ Returns current positions (not historical snapshots)
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models.position import Position
+from app.core.config import settings
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/positions", tags=["positions"])
@@ -45,9 +47,12 @@ async def get_positions(
         user_id = int(user.get("user_id"))
         
         # Query current positions (not historical)
+        # Filter to only allowed tickers: STRC, STRD, STRK, STRF, SATA
+        allowed_tickers_upper = {t.upper() for t in settings.ALLOWED_TICKERS}
         query = db.query(Position).filter(
             Position.user_id == user_id,
-            Position.shares > 0
+            Position.shares > 0,
+            func.upper(Position.ticker).in_(allowed_tickers_upper)
         )
         
         total = query.count()
